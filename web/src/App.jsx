@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const LANGS = [
   { code: "en", label: "英语" },
@@ -23,10 +23,26 @@ const STAGE_LABEL = {
 export default function App() {
   const [file, setFile] = useState(null);
   const [lang, setLang] = useState("en");
+  const [bgm, setBgm] = useState(true);
+  const [lipsync, setLipsync] = useState(false);
   const [job, setJob] = useState(null); // {state, stage, error}
   const [jobId, setJobId] = useState(null);
+  const [history, setHistory] = useState([]);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef(null);
+
+  const refreshHistory = useCallback(async () => {
+    try {
+      const r = await fetch("/api/jobs");
+      if (r.ok) setHistory(await r.json());
+    } catch {
+      /* 历史加载失败不影响主流程 */
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshHistory();
+  }, [refreshHistory]);
 
   const poll = useCallback(async (id) => {
     for (;;) {
@@ -38,10 +54,13 @@ export default function App() {
         data = { state: "error", error: "网络错误" };
       }
       setJob(data);
-      if (data.state === "done" || data.state === "error") return;
+      if (data.state === "done" || data.state === "error") {
+        refreshHistory();
+        return;
+      }
       await new Promise((r) => setTimeout(r, 1500));
     }
-  }, []);
+  }, [refreshHistory]);
 
   const submit = useCallback(async () => {
     if (!file) return;
@@ -49,6 +68,8 @@ export default function App() {
     const body = new FormData();
     body.append("video", file);
     body.append("lang", lang);
+    body.append("bgm", bgm);
+    body.append("lipsync", lipsync);
     try {
       const r = await fetch("/api/jobs", { method: "POST", body });
       if (!r.ok) {
@@ -61,7 +82,7 @@ export default function App() {
     } catch (e) {
       setJob({ state: "error", error: String(e.message || e) });
     }
-  }, [file, lang, poll]);
+  }, [file, lang, bgm, lipsync, poll]);
 
   const reset = () => {
     setFile(null);
@@ -117,6 +138,22 @@ export default function App() {
                 </option>
               ))}
             </select>
+            <label className="opt">
+              <input
+                type="checkbox"
+                checked={bgm}
+                onChange={(e) => setBgm(e.target.checked)}
+              />
+              保留背景音乐
+            </label>
+            <label className="opt" title="对出镜人脸段做口型同步，耗时显著增加">
+              <input
+                type="checkbox"
+                checked={lipsync}
+                onChange={(e) => setLipsync(e.target.checked)}
+              />
+              口型同步
+            </label>
             <button disabled={!file || busy} onClick={submit}>
               开始翻译
             </button>
@@ -153,6 +190,42 @@ export default function App() {
         <div className="error">
           <p>出错了：{job.error}</p>
           <button onClick={reset}>重试</button>
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="history">
+          <h2>历史任务</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>任务</th>
+                <th>目标语言</th>
+                <th>状态</th>
+                <th>成品</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.slice(0, 8).map((h) => (
+                <tr key={h.id}>
+                  <td>{h.id}</td>
+                  <td>{LANGS.find((l) => l.code === h.lang)?.label || h.lang}</td>
+                  <td>
+                    {h.state === "done"
+                      ? "✅ 完成"
+                      : h.state === "error"
+                        ? `❌ ${h.error?.slice(0, 40) || "失败"}`
+                        : `${STAGE_LABEL[h.stage] || h.stage} ${h.percent || 0}%`}
+                  </td>
+                  <td>
+                    {h.state === "done" && (
+                      <a href={`/api/jobs/${h.id}/result`}>播放/下载</a>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

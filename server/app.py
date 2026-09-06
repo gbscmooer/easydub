@@ -61,7 +61,8 @@ def _init_db() -> None:
             )
         """)
         for col in ("lipsync INTEGER NOT NULL DEFAULT 0",
-                    "percent INTEGER NOT NULL DEFAULT 0"):
+                    "percent INTEGER NOT NULL DEFAULT 0",
+                    "bgm INTEGER NOT NULL DEFAULT 1"):
             try:  # 旧库平滑加列
                 con.execute(f"ALTER TABLE jobs ADD COLUMN {col}")
             except sqlite3.OperationalError:
@@ -71,7 +72,8 @@ def _init_db() -> None:
 _init_db()
 
 
-def _worker(job_id: str, video: Path, lang: str, lipsync: bool) -> None:
+def _worker(job_id: str, video: Path, lang: str, lipsync: bool,
+            bgm: bool = True) -> None:
     def progress(stage: str) -> None:
         with _db() as con:
             con.execute("UPDATE jobs SET stage=?, "
@@ -81,6 +83,7 @@ def _worker(job_id: str, video: Path, lang: str, lipsync: bool) -> None:
     try:
         out = run_managed(video, lang, progress=progress,
                           lipsync_provider="latentsync" if lipsync else "none",
+                          keep_bgm=bgm,
                           workdir=str(ROOT / "artifacts"))
         with _db() as con:
             con.execute("UPDATE jobs SET state='done', stage='done', result=? "
@@ -96,7 +99,8 @@ def _worker(job_id: str, video: Path, lang: str, lipsync: bool) -> None:
 @app.post("/api/jobs")
 async def submit_job(video: UploadFile = File(...),
                      lang: str = Form("en"),
-                     lipsync: bool = Form(False)) -> dict:
+                     lipsync: bool = Form(False),
+                     bgm: bool = Form(True)) -> dict:
     ext = Path(video.filename or "").suffix.lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"仅支持 {'/'.join(ALLOWED_EXT)}，收到 {ext or '无名文件'}")
@@ -115,10 +119,10 @@ async def submit_job(video: UploadFile = File(...),
     with _db() as con:
         con.execute(
             "INSERT INTO jobs (id, state, stage, lang, video, result, error,"
-            " created, lipsync, percent) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " created, lipsync, percent, bgm) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (job_id, "queued", "upload", lang, str(dst), "", "", time.time(),
-             int(lipsync), STAGE_PERCENT.get("upload", 0)))
-    threading.Thread(target=_worker, args=(job_id, dst, lang, lipsync),
+             int(lipsync), STAGE_PERCENT.get("upload", 0), int(bgm)))
+    threading.Thread(target=_worker, args=(job_id, dst, lang, lipsync, bgm),
                      daemon=True).start()
     return {"job_id": job_id}
 

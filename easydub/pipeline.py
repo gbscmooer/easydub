@@ -470,8 +470,10 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
 def run_managed(video, target_lang: str = "en", **kw) -> Path:
     """带进度回调复位保护的 run：Web 后台线程用它，避免回调泄漏到下一次任务。"""
     global _progress_cb
-    _progress_cb = kw.pop("progress", None)
+    progress = kw.pop("progress", None)
     try:
-        return run(video, target_lang, **kw)
+        # 回调必须显式传给 run()：run() 内部会用 progress 参数（默认 None）
+        # 覆盖模块级回调——不传就会被清掉，Web 进度条永远停在提交瞬间
+        return run(video, target_lang, progress=progress, **kw)
     finally:
         _progress_cb = None
