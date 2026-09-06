@@ -180,3 +180,15 @@
   81 测试绿。
 - 提交：本轮 feat + ITERATIONS/EDPLAN 更新。
 
+
+## 第 11 轮补充：首次推送 GitHub + CI 修复
+
+- 推送前审查：.gitignore 补全（*.mp3/m4a/gif/webm/onnx/db/log/IDE 文件等）；
+  跟踪文件 63 个全部为代码/文档；密钥扫描干净（.env 未入库、.env.example 全空值）。
+- 首次 CI 失败诊断链（匿名无日志权限，靠公开注解远程排障）：
+  1. `ffmpeg -version | head -1` 管道吞掉退出码 → ffmpeg 缺失却显示"成功"；
+  2. pytest 步骤 `2>/dev/null` 吞掉错误输出；
+  3. `continue-on-error: true` 会中和后续 `if: failure()` 条件——要用
+     `steps.<id>.outcome == 'failure'`。
+- 修复：显式 `apt-get install ffmpeg` + `which` 检查 + pipefail + 日志落
+  artifact + 失败详情转公开注解。**CI 最终 success**（fc8f1c7）。
