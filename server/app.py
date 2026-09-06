@@ -32,6 +32,12 @@ ALLOWED_EXT = {".mp4", ".mov"}
 app = FastAPI(title="easydub web")
 _busy = threading.Semaphore(1)
 
+# 阶段 → 大致进度百分比（给前端进度条用，粒度到阶段即可）
+STAGE_PERCENT = {
+    "upload": 5, "asr": 20, "translate": 40, "tts": 55, "retry": 65,
+    "mix": 75, "lipsync": 88, "done": 100,
+}
+
 
 def _db() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH)
@@ -54,18 +60,24 @@ def _init_db() -> None:
                 created REAL NOT NULL
             )
         """)
+        try:  # 旧库平滑加列
+            con.execute("ALTER TABLE jobs ADD COLUMN lipsync INTEGER "
+                        "NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
 
 
 _init_db()
 
 
-def _worker(job_id: str, video: Path, lang: str) -> None:
+def _worker(job_id: str, video: Path, lang: str, lipsync: bool) -> None:
     def progress(stage: str) -> None:
         with _db() as con:
             con.execute("UPDATE jobs SET stage=? WHERE id=?", (stage, job_id))
 
     try:
         out = run_managed(video, lang, progress=progress,
+                          lipsync_provider="latentsync" if lipsync else "none",
                           workdir=str(ROOT / "artifacts"))
         with _db() as con:
             con.execute("UPDATE jobs SET state='done', stage='done', result=? "
@@ -80,7 +92,8 @@ def _worker(job_id: str, video: Path, lang: str) -> None:
 
 @app.post("/api/jobs")
 async def submit_job(video: UploadFile = File(...),
-                     lang: str = Form("en")) -> dict:
+                     lang: str = Form("en"),
+                     lipsync: bool = Form(False)) -> dict:
     ext = Path(video.filename or "").suffix.lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"仅支持 {'/'.join(ALLOWED_EXT)}，收到 {ext or '无名文件'}")
