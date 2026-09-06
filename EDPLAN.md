@@ -64,13 +64,13 @@ M4（Agent/MCP）、M5（评测）、M6（包装）**不在本轮范围**，勿�
 
 ## 5. 状态表（动手即更新）
 
-- [ ] S1 M0 仓库规整
-- [ ] S2 M2 环境就绪（LatentSync + conda env + 权重）
-- [ ] S3 M2 手动推理跑通
-- [ ] S4 M2 服务 :8001 起
+- [x] S1 M0 仓库规整（4 条主题提交，媒体/.env 已隔离）
+- [x] S2 M2 环境就绪（LatentSync@~/LatentSync + conda `latentsync` clone 自 vllm-cuda129 + 权重 5G）
+- [x] S3 M2 手动推理跑通（7.5s 样片 91s 出片，5090 实测）
+- [x] S4 M2 服务 :8001 起（/health 返回 RTX 5090；lipsync-test HTTP 契约全通）
 - [ ] S5 M2 接入流水线 + TED 口型样片
-- [ ] S6 M3 后端三端点
-- [ ] S7 M3 前端页
+- [x] S6 M3 后端三端点（pytest 21 绿；curl 全流程提交→进度→下载 200）
+- [x] S7 M3 前端页（Vite 构建产物由 FastAPI 托管，页面可访问；浏览器自动化后端缺失，UI 层验证降级为 API E2E）
 - [ ] S8 收尾提交
 
 ## 6. 备忘（踩坑记录，持续追加）
@@ -79,3 +79,7 @@ M4（Agent/MCP）、M5（评测）、M6（包装）**不在本轮范围**，勿�
 - 本机 ffmpeg 带 libass（字幕会烧录），`subtitles` 滤镜路径必须走 `_subtitles_arg` 转义。
 - edge-tts 音频必须过 `trim_silence` 再测时长，否则对齐全毁（Nike 实验：溢出 8→1）。
 - 切换目标语言依赖 per-lang 产物隔离（`segments_translated.<lang>.json` / `tts_<lang>/`），勿改回共享文件名。
+- **LatentSync 环境坑**：insightface 会把 `opencv-python` 拉进环境，与 clone 来的 cv2 混装后 `imread` 静默返回空 → 一律保持环境里只有一个 opencv（当前 opencv-python==4.13.0.92）。
+- **insightface 权重路径**：LatentSync 的 FaceAnalysis 用 `root=checkpoints/auxiliary`，buffalo_l 要放在 `checkpoints/auxiliary/models/buffalo_l/`（不是 `~/.insightface`）。
+- **LatentSync 硬约束**：视频每一帧都必须检出人脸（单帧无脸整段失败），所以流水线按"人脸段切块 + 单段失败回退原画面"设计；LatentSync 原生 25fps，接入前先 `normalize_fps` 出 master 档。
+- 服务器壳 `CMD_TEMPLATE` 用 `sys.executable`，别用裸 `python`（conda 环境的 shell 里没有）。

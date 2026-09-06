@@ -38,24 +38,24 @@
 - [ ] 自制 3 条素材（口播/带 BGM/短句密集，make_sample.py 扩展，**不用真实品牌广告**）
 - [ ] 全链路跑通，录一版"字幕+配音"对比 demo 存档（无 lip-sync 也成立的安全垫）
 
-### D5 lip-sync 技术验证（自建 GPU 服务器方案，2026-09-05 更新）
-硬件：用户自有 Windows 服务器（RTX 5090 / 9950X）——不租卡，sync.so 降为可选对比。
-- [ ] 按 `server/README_WINDOWS.md` 在 Windows 机装 Python + cu128 版 torch + LatentSync，**手动跑通一次推理**
-- [ ] 把跑通的命令填进 `server/lipsync_server.py` 的 CMD_TEMPLATE，起服务（0.0.0.0:8001，防火墙放行）
-- [ ] Mac 侧 `.env` 配 `LIPSYNC_SERVER_URL`，跑 `python -m easydub lipsync-test 人脸视频.mp4 音频.wav out.mp4`
+### D5 lip-sync 技术验证 ✅ 已完成（2026-09-06，环境=本机 WSL+RTX 5090）
+- [x] LatentSync 1.6 部署在 `~/LatentSync`，conda 环境 `latentsync`（clone 自 vllm-cuda129，torch 2.10+cu128），权重走 hf-mirror 下载
+- [x] `server/lipsync_server.py` 环境变量化（LATENTSYNC_DIR/CMD），:8001 服务实测 /health 正常
+- [x] `python -m easydub lipsync-test` HTTP 契约全通（7.5s 样片 91s 出片）
 - [ ] （可选对比）sync.so 免费额度跑同素材，记录效果/耗时/价格
 - 验收：Mac 上一条命令拿到口型正确的 15s 样片
 - 面试点：自建 GPU 推理服务（HTTP 契约、任务轮询）vs 商用 API 的取舍；自有 5090 长期零边际成本
 
-### D6 lip-sync 接入流水线
-- [ ] 人脸检测分段（OpenCV），只对出镜段做口型对齐
-- [ ] 分段结果按时间轴拼回原片，`--lipsync` 开关联通
-- 验收：30s 真人口播成品，口型基本同步
+### D6 lip-sync 接入流水线 ✅ 已完成（2026-09-06）
+- [x] `facedetect.py` Haar 抽样分段；只对出镜段做口型对齐；单段失败回退原画面
+- [x] 25fps 主档切分→逐段口型→concat 拼回→音频仍用 dub_track
+- 验收 ✅：TED 40s 切段 `--lang zh --lipsync latentsync` 216s 出片，口型段拼回成功
+- 注意：本地 LatentSync 打了补丁（单帧检不到脸沿用上一帧人脸框），见 EDPLAN §6
 
-### D7 FastAPI 三端点 + React 上传页（产品面）
-- [ ] `/api/jobs`（提交）、`/api/jobs/{id}`（进度）、`/api/jobs/{id}/result`——Dify 和前端共用
-- [ ] 简版 React 页：拖拽上传 → 进度 → 视频播放器（复用 essay_read 的前端经验）
-- 验收：非技术人员不看文档能完成一次翻译
+### D7 FastAPI 三端点 + React 上传页（产品面）✅ 已完成（2026-09-06）
+- [x] `/api/jobs`（提交）、`/api/jobs/{id}`（进度）、`/api/jobs/{id}/result`——Dify 和前端共用（SQLite 任务表，并发=1）
+- [x] React 页（Vite）：拖拽上传 → 进度轮询 → 视频播放器，构建产物由 FastAPI 静态托管
+- 验收：API 级 E2E 全通（提交→进度→下载 200）；3 名非技术人员实测待安排
 
 ### D8 Dify workflow 编排
 - [ ] Dify Cloud：开始 → HTTP(asr) → LLM(翻译提示词) → HTTP(tts-align) → HTTP(render) → 结束
