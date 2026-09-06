@@ -151,6 +151,24 @@ cd /home/kokomilove/easydub && .venv/bin/python -m uvicorn server.app:app --port
 - `--voice` 显式指定优先；`--no-auto-voice` 可关；**音色并入 TTS 缓存键**
   （原先换 `--voice` 会错拿旧音频，一并修复）；report 记录 `voice`。
 
+### R6 ASR 选型对比 + 双向平移补偿（d2a7604）
+
+- eval.py 加 `--asr/--asr-model`，结果键扩为 (clip, lang, tier, asr)。
+- **E5 数据**（5 素材 en T4）：云端 fish CER 0.0~0.07 / 本地 whisper base
+  0.04~0.35（低 BGM 退化最重，whisper 抗噪弱）→ 默认云端，本地管零成本/隐私。
+- **偏差方向随通道相反**：fish 偏晚 ~0.15s（+0.12）、whisper 偏早 ~0.08s
+  （-0.07）——apply_onset_shift 支持负值（后移受下一段起点约束）。
+  补偿后本地偏移 0.023~0.035，双通道 ≤100ms。
+
+### R7 Web 产品面补齐 + 进度回归修复（bec158b）
+
+- POST /api/jobs 加 bgm 字段透传 keep_bgm；前端 BGM/口型复选框 + 历史任务
+  列表（GET /api/jobs 已有端点，前端此前没用）。
+- **进度回调回归（真实 E2E 抓出）**：run() 内部用 progress 参数覆盖模块级
+  _progress_cb，run_managed 弹出后未显式透传 → Web 进度条永远停在 5%。
+  单测打桩（fake_run 直接调 kw["progress"]）测不出这种接线 bug——修复后
+  真实 E2E 5%→100% 全阶段推进，另补接线回归测试。
+
 ## 6. 备忘（踩坑记录，持续追加）
 
 - `.venv` 原为 macOS 拷贝，已用 uv 重建（py3.12）；旧环境备份在 `.venv.mac.bak`（确认无用后可删）。
@@ -175,3 +193,10 @@ cd /home/kokomilove/easydub && .venv/bin/python -m uvicorn server.app:app --port
   用"相对最响帧的比例"（0.25×max）。
 - `sine` 源 + `volume` 组合在 300Hz/7.0 增益下才是 -4dBFS：做压缩类滤镜测试时
   先 `volumedetect` 校准实际电平，别按生成参数想当然。
+- **打桩测试测不出接线 bug**：fake_run 直接调 kw["progress"]，永远发现不了
+  回调根本没被传进来——关键接线必须有真实 E2E 或专测（R7 进度卡 5% 教训）。
+- 本地 cut_clip 产物是 **-an 无音轨的**（ted_src40.mp4 踩过）：拿它做音源类
+  验证前先 ffprobe 音轨。
+- bash 里 `pkill -f` 的模式会匹配到自身命令行 → 自杀；用 `fuser -k <port>/tcp`
+  或给模式加字符类（812[3]）——但整个复合命令里出现同样的明文串照样匹配，
+  最稳是分两个 Bash 调用。

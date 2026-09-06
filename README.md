@@ -38,9 +38,10 @@ cp .env.example .env   # 编辑填入 LLM_API_KEY / OPENROUTER_API_KEY
 # 浏览器打开 http://127.0.0.1:8000：拖入视频 → 选语言 → 进度条 → 内嵌播放成品
 ```
 
-三端点（Dify 亦可直接调）：`POST /api/jobs`（multipart: video/lang/lipsync）、
-`GET /api/jobs/{id}`（状态+阶段进度）、`GET /api/jobs/{id}/result`（成品 mp4）。
-SQLite 任务表 `artifacts/jobs.db`，并发=1。
+三端点（Dify 亦可直接调）：`POST /api/jobs`（multipart: video/lang/lipsync/bgm）、
+`GET /api/jobs/{id}`（状态+阶段进度）、`GET /api/jobs/{id}/result`（成品 mp4）、
+`GET /api/jobs`（历史任务）。SQLite 任务表 `artifacts/jobs.db`，并发=1。
+前端支持保留背景音乐/口型同步开关与历史任务回看。
 
 ## 口型同步（lip-sync）
 
@@ -62,10 +63,12 @@ LATENTSYNC_DIR=~/LatentSync python server/lipsync_server.py    # :8001
 .venv/bin/python scripts/make_eval_set.py   # 5 条素材：纯口播/短句密集/低BGM/人脸出镜/慢语速
 .venv/bin/python scripts/eval.py            # E1 消融：4 档 × 素材 × 语言 → 指标表
 .venv/bin/python scripts/eval.py --clips c1_pure --tiers T4_full   # 只跑基线
+.venv/bin/python scripts/eval.py --asr local --asr-model base      # E5：本地 whisper 对比云端
 ```
 
 自动产出：溢出率、时长匹配率、CER（合成素材带标准文稿）、字幕时间轴偏移、
 端到端耗时（RT 系数）、单条成本分项（单价表在 `easydub/eval_metrics.py` 可改）。
+E1 消融 / E2 TTS 选型 / E5 ASR 选型数据见 [docs/EVALUATION.md](docs/EVALUATION.md)。
 
 ## 流水线
 
