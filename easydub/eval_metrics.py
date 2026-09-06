@@ -65,7 +65,9 @@ def run_metrics(report: dict, wall_seconds: float, video_seconds: float,
     summary = report["summary"]
     total = max(summary["total"], 1)
     overflow_rate = round(summary["overflow"] / total, 4)
-    match_rate = round((summary["fit"] + summary["atempo"]) / total, 4)
+    # spill = 溢出但借句间空隙容纳，不撞下一句，也算对齐成功
+    matched = summary["fit"] + summary["atempo"] + summary.get("spill", 0)
+    match_rate = round(matched / total, 4)
 
     out = {
         "segments": summary["total"],

@@ -10,7 +10,7 @@ import json
 import time
 from pathlib import Path
 
-from .align import find_overflow, plan_alignment
+from .align import calibrate_cps, find_overflow, plan_alignment, reclassify_spill
 from .config import Settings
 from .media import (SUBTITLE_STYLE, build_dub_track, change_tempo,
                     concat_videos, cut_clip, extract_audio,
@@ -20,7 +20,7 @@ from .media import (SUBTITLE_STYLE, build_dub_track, change_tempo,
 from .models import Segment, load_segments, save_segments
 from .services.asr import transcribe, transcribe_openrouter
 from .services.tts import make_tts
-from .services.translator import EchoTranslator, LLMTranslator
+from .services.translator import CPS_TABLE, EchoTranslator, LLMTranslator
 
 # Web 端注入的进度回调（并发=1，模块级单回调即可）
 _progress_cb = None
@@ -108,8 +108,10 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
                     translator_mode: str = "llm", voice=None,
                     allow_atempo: bool = True,
                     retry_overflow: bool = True, tts_rate: str = None,
-                    glossary: dict = None, max_retry_rounds: int = 2) -> dict:
-    """返回 {"tts": 名称, "overflow_before_retry": 首轮溢出数, "retry_rounds": 轮数}"""
+                    glossary: dict = None, max_retry_rounds: int = 2,
+                    video_total: float = None) -> dict:
+    """返回 {"tts": 名称, "overflow_before_retry": 首轮溢出数,
+    "retry_rounds": 轮数, "measured_cps": 实测语速}"""
     tts = make_tts(tts_provider, target_lang, voice, settings, rate=tts_rate)
     # 缓存键含供应商：切 TTS 供应商不会错拿旧音频
     tts_dir = out_dir / f"tts_{tts_provider}_{target_lang}"
@@ -137,24 +139,32 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
     for i, seg in enumerate(segments):
         _align(i, seg)
 
+    # 溢出重分类：音频能借句间空隙容纳的不算真冲突，不烧重译（align.reclassify_spill）
+    n_spill = reclassify_spill(segments, video_total)
+    if n_spill:
+        _log("align", f"{n_spill} 段溢出可借句间空隙容纳，改判 spill（不重译）")
+
     # 溢出重译闭环（可多轮，逐轮收紧预算 25%）。双向夹逼的后手：
     # 首轮译文实测超时后，把实测约束反馈给生成端。
+    # 重译预算不用静态 CPS 表：用本次 TTS 实测语速反推（换供应商不漂移）。
+    cps = calibrate_cps(segments, CPS_TABLE.get(target_lang, 14))
     n_overflow_before = sum(1 for s in segments if s.action == "overflow")
     rounds = 0
     can_retry = (retry_overflow and translator_mode == "llm"
                  and settings.llm_api_key)
     if can_retry:
         while rounds < max_retry_rounds:
-            overflows = find_overflow(segments)
+            overflows = find_overflow(segments, cps=cps)
             if not overflows:
                 break
             rounds += 1
+            n_round_start = len(overflows)
             shrink = 0.75 ** (rounds - 1)
             tr = LLMTranslator(settings.llm_api_key, settings.llm_base_url,
                                settings.llm_model, target_lang,
                                glossary=glossary)
-            _log("retry", f"第{rounds}轮：{len(overflows)} 段配音超时，"
-                          f"按字符预算重译")
+            _log("retry", f"第{rounds}轮：{n_round_start} 段配音超时，"
+                          f"按字符预算重译（实测语速 {cps} 字符/秒）")
             for p in overflows:
                 seg = segments[p["index"]]
                 budget = max(2, int(p["budget"] * shrink))
@@ -164,14 +174,21 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
                 _log("retry", f"段{p['index']}：预算 {budget} 字符 → "
                               f"译文 {len(new_text)} 字符，配音 "
                               f"{seg.audio_duration:.2f}s，动作 {seg.action}")
+            reclassify_spill(segments, video_total)
             # 重译结果写回翻译缓存，重跑不重复花钱
             save_segments(segments,
                           out_dir / f"segments_translated.{target_lang}.json")
-        remaining = len(find_overflow(segments))
+            # 止损：本轮没有净减少溢出（预算已到 TTS 底噪/垫尾极限），再收紧无益
+            n_now = len(find_overflow(segments, cps=cps))
+            if n_now >= n_round_start:
+                _log("retry", f"第{rounds}轮无净改善（{n_now}/{n_round_start}），"
+                              f"提前止损")
+                break
+        remaining = len(find_overflow(segments, cps=cps))
         if remaining:
             _log("retry", f"重译 {rounds} 轮后仍有 {remaining} 段溢出，记入报告")
     else:
-        n = len(find_overflow(segments))
+        n = len(find_overflow(segments, cps=cps))
         if n:
             why = "重译已关闭（消融档）" if not retry_overflow \
                 else "echo 模式无 LLM"
@@ -179,7 +196,7 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
 
     save_segments(segments, out_dir / f"segments_final.{target_lang}.json")
     return {"tts": tts.name, "overflow_before_retry": n_overflow_before,
-            "retry_rounds": rounds}
+            "retry_rounds": rounds, "measured_cps": cps}
 
 
 # ---------------- 阶段 5：配音轨合成 ----------------
@@ -306,6 +323,7 @@ def stage_render(video_for_mux: Path, track: Path, segments: list,
         "target_lang": target_lang,
         "tts_provider": tts_name,
         "retry_rounds": stats.get("retry_rounds", 0),
+        "measured_cps": stats.get("measured_cps"),
         "keep_bgm": bgm_kept,
         "segments": [
             {"i": i, "start": round(s.start, 3), "end": round(s.end, 3),
@@ -320,6 +338,7 @@ def stage_render(video_for_mux: Path, track: Path, segments: list,
         "total": len(segments),
         "fit": actions.count("fit"),
         "atempo": actions.count("atempo"),
+        "spill": actions.count("spill"),
         "overflow": actions.count("overflow"),
         "overflow_before_retry": stats.get("overflow_before_retry", 0),
     }
@@ -363,7 +382,8 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
                                 translator_mode=translator_mode, voice=voice,
                                 allow_atempo=allow_atempo,
                                 retry_overflow=retry_overflow,
-                                tts_rate=tts_rate, glossary=glossary)
+                                tts_rate=tts_rate, glossary=glossary,
+                                video_total=probe_duration(video))
     tracks = stage_mix(segments, target_lang, video, out_dir,
                        keep_bgm=keep_bgm)
     video_for_mux = stage_lipsync(video, tracks["dub"], target_lang, out_dir,

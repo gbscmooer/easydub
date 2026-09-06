@@ -1,6 +1,68 @@
 """时长对齐与碎段合并的纯逻辑单测：不需要 ffmpeg / 网络 / API key。"""
-from easydub.align import plan_alignment
+from easydub.align import calibrate_cps, plan_alignment, reclassify_spill
+from easydub.models import Segment
 from easydub.services.asr import _join_words, merge_segments
+
+
+def _seg(start, end, translated, audio_duration, action):
+    return Segment(start=start, end=end, text="中文", translated=translated,
+                   audio_duration=audio_duration, action=action)
+
+
+class TestCalibrateCps:
+    def test_downward_revision_from_measured_median(self):
+        # 译文 14 字符、实测 1.4s → 10 字符/秒，比表值 14 慢 → 预算收紧
+        segs = [_seg(0, 2, "a" * 14, 1.4, "fit"),
+                _seg(2, 4, "b" * 14, 1.4, "fit"),
+                _seg(4, 6, "c" * 14, 1.4, "atempo")]
+        assert calibrate_cps(segs, 14) == 10.0
+
+    def test_faster_than_table_keeps_table_value(self):
+        # 实测比表快：预算放宽会引入溢出风险，保守沿用表值
+        segs = [_seg(0, 2, "a" * 20, 1.0, "fit")]
+        assert calibrate_cps(segs, 14) == 14
+
+    def test_floor_at_60_percent_of_table(self):
+        # 病态慢（极短句被垫尾撑大）：下修不超过表值的 60%
+        segs = [_seg(0, 2, "hi", 2.0, "fit")]
+        assert calibrate_cps(segs, 14) == 8.4
+
+    def test_no_usable_segments_falls_back(self):
+        segs = [_seg(0, 2, "a", 1.0, "overflow")]
+        assert calibrate_cps(segs, 14) == 14
+
+
+class TestReclassifySpill:
+    def test_short_overflow_into_gap_becomes_spill(self):
+        # 槽位 0.24s 的"go"溢出 0.14s，下一句在 3s 后：借空隙放完，非真冲突
+        segs = [_seg(50.40, 50.64, "go", 0.38, "overflow"),
+                _seg(53.52, 54.56, "but ask", 1.0, "fit")]
+        assert reclassify_spill(segs, total=60.0) == 1
+        assert segs[0].action == "spill"
+
+    def test_collision_with_next_dub_stays_overflow(self):
+        # 音频尾部撞上下一句配音开头：真冲突，保留 overflow
+        segs = [_seg(10.0, 11.0, "long text", 2.5, "overflow"),
+                _seg(12.0, 13.0, "next", 1.0, "fit")]
+        assert reclassify_spill(segs, total=60.0) == 0
+        assert segs[0].action == "overflow"
+
+    def test_last_segment_capped_by_video_end(self):
+        # 末段溢出超过视频结尾：音频会被截断，是真冲突
+        segs = [_seg(58.0, 59.0, "tail", 2.0, "overflow")]
+        assert reclassify_spill(segs, total=60.0) == 0
+
+    def test_last_segment_spilling_within_video_ends_ok(self):
+        segs = [_seg(58.0, 59.0, "tail", 1.2, "overflow")]
+        assert reclassify_spill(segs, total=60.0) == 1
+
+    def test_skips_audioless_followers(self):
+        # 下一段还没合成音频时，找更后面的配音起点做碰撞判断
+        segs = [_seg(10.0, 11.0, "mid", 1.3, "overflow"),
+                _seg(11.2, 12.0, "no audio yet", None, ""),
+                _seg(14.0, 15.0, "next dub", 1.0, "fit")]
+        assert reclassify_spill(segs, total=60.0) == 1
+        assert segs[0].action == "spill"
 
 
 class TestPlanAlignment:

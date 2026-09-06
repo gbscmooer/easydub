@@ -65,3 +65,46 @@ def find_overflow(segments, cps: float = 14) -> List[dict]:
             "budget": int(seg.slot * cps),
         })
     return plans
+
+
+def calibrate_cps(segments, base_cps: float) -> float:
+    """用本次 TTS 实测时长反推实际语速（字符/秒），收紧重译预算。
+
+    静态 CPS 表是拍脑袋值，换 TTS 供应商/音色就漂（es 实测就比表慢，
+    导致重译预算偏松、反复溢出）。取 fit/atempo 段的
+    len(译文)/实测时长 中位数：只往下修（实测更慢 → 预算更紧），
+    最多下修 40% 防病态值；实测比表快时保守沿用表值。
+    """
+    vals = sorted(
+        len(s.translated) / s.audio_duration
+        for s in segments
+        if s.action in ("fit", "atempo") and s.translated and s.audio_duration
+    )
+    if not vals:
+        return base_cps
+    measured = vals[len(vals) // 2]
+    return round(max(base_cps * 0.6, min(base_cps, measured)), 2)
+
+
+def reclassify_spill(segments, total: float = None) -> int:
+    """把"溢出但撞不到下一句"的段从 overflow 改判为 spill，返回改判数。
+
+    overflow 音频本来就会自然延后到句间空隙里播完（build_dub_track 按
+    起始秒定位），只有当音频尾部撞上下一句配音开头（或视频结尾）才是真
+    冲突。超短槽位（如 0.24s 的"go"）翻译救不了，但往往借空隙就够——
+    这类段不该烧 LLM 重译，也不该计入溢出率。
+    """
+    n = 0
+    for i, seg in enumerate(segments):
+        if seg.action != "overflow":
+            continue
+        audio_end = seg.start + (seg.audio_duration or 0)
+        limit = total if total is not None else float("inf")
+        for nxt in segments[i + 1:]:
+            if nxt.audio_duration:
+                limit = min(limit, nxt.start)
+                break
+        if audio_end <= limit - 0.05:
+            seg.action = "spill"
+            n += 1
+    return n

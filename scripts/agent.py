@@ -82,7 +82,8 @@ def apply_and_save(run_dir: Path, lang: str, settings: Settings,
     actions = [s.action for s in segments]
     report["summary"] = {
         "total": len(segments), "fit": actions.count("fit"),
-        "atempo": actions.count("atempo"), "overflow": actions.count("overflow"),
+        "atempo": actions.count("atempo"), "spill": actions.count("spill"),
+        "overflow": actions.count("overflow"),
         "overflow_before_retry": report["summary"]["overflow_before_retry"],
         "agent": True,
     }
