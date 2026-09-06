@@ -68,23 +68,32 @@ def find_overflow(segments, cps: float = 14) -> List[dict]:
 
 
 def apply_onset_shift(segments, shift: float, min_gap: float = 0.05) -> int:
-    """把每段起止整体前移 shift 秒，补偿云 ASR 起点系统性偏晚。
+    """按 ASR 通道的时间轴偏差整体平移段起止，返回改动的段数。
 
-    云 ASR（fish transcribe 等）受语音软起音影响，检出起点普遍比真实
-    开口晚 0.1~0.2s（eval 实测 mean 0.156s），配音/字幕跟着晚。起止同步
-    前移（保槽位时长，预算与对齐逻辑不受扰），前移量受上一段终点约束：
-    最多借完句间空隙、留 min_gap 防贴脸。返回实际改动的段数。
+    云 ASR（fish transcribe 等）受语音软起音影响，起点普遍比真实开口晚
+    （eval 实测 ~0.15s）→ shift>0 前移补偿；本地 whisper 的时间戳倾向
+    早于真实开口（E5 实测 ~0.08s）→ shift<0 后移补偿。起止同步平移
+    （保槽位时长，预算与对齐逻辑不受扰）。
+    前移最多借完与上一段的空隙、后移最多借完与下一段的空隙，均留
+    min_gap 防贴脸。
     """
     n = 0
-    prev_end = 0.0
-    for seg in segments:
-        allowed = max(0.0, seg.start - prev_end - min_gap)
-        d = min(shift, allowed)
-        if d > 0:
+    for i, seg in enumerate(segments):
+        if shift > 0:
+            prev_end = segments[i - 1].end if i else 0.0
+            allowed = max(0.0, seg.start - prev_end - min_gap)
+            d = min(shift, allowed)
+        elif shift < 0:
+            nxt = segments[i + 1].start if i + 1 < len(segments) \
+                else seg.end + 10.0
+            allowed = max(0.0, nxt - seg.end - min_gap)
+            d = max(shift, -allowed)
+        else:
+            continue
+        if d:
             seg.start = round(seg.start - d, 3)
             seg.end = round(seg.end - d, 3)
             n += 1
-        prev_end = seg.end
     return n
 
 

@@ -74,10 +74,10 @@ def stage_asr(video: Path, out_dir: Path, settings: Settings, *,
         _log("asr", f"本地识别（模型 {asr_model or settings.asr_model_size}）...")
         raw = transcribe(wav, asr_model or settings.asr_model_size)
     segments = [Segment(**d) for d in raw]
-    if onset_shift > 0 and segments:
+    if onset_shift and segments:
         n = apply_onset_shift(segments, onset_shift)
-        _log("asr", f"起点前移补偿 {onset_shift}s（{n} 段，"
-                    f"云 ASR 起点系统性偏晚）")
+        _log("asr", f"起点平移补偿 {onset_shift}s（{n} 段，"
+                    f"按 ASR 通道的时间轴偏差校准）")
     save_segments(segments, seg_file)
     _log("asr", f"识别到 {len(segments)} 段")
     return segments
@@ -421,11 +421,11 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
     out_dir = Path(workdir or settings.workdir) / video.stem
     out_dir.mkdir(parents=True, exist_ok=True)
     glossary = _parse_glossary(settings.glossary)
-    # 云 ASR 起点系统性偏晚（eval 实测 ~0.15s），默认对云端通道前移补偿；
-    # 本地 whisper 偏差特性不同，默认不动。显式传参可覆盖。
+    # ASR 时间轴偏差随通道方向不同（E5 实测）：fish 云端偏晚 ~0.15s → +0.12
+    # 前移；本地 whisper 偏早 ~0.08s → -0.07 后移。显式传参可覆盖。
     provider = asr_provider or settings.asr_provider
     if asr_onset_shift is None:
-        asr_onset_shift = 0.12 if provider == "openrouter" else 0.0
+        asr_onset_shift = 0.12 if provider == "openrouter" else -0.07
 
     segments = stage_asr(video, out_dir, settings, asr_provider=asr_provider,
                          asr_model=asr_model, onset_shift=asr_onset_shift)

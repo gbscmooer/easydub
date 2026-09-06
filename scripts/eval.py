@@ -34,16 +34,20 @@ TIERS = {
 
 
 def one_run(video: Path, lang: str, tier: str, workroot: Path,
-            tts_provider: str = "edge") -> dict:
+            tts_provider: str = "edge", asr_provider: str = "",
+            asr_model=None) -> dict:
     meta = json.loads((video.parent / "meta.json").read_text(encoding="utf-8"))
     info = next(m for m in meta if m["name"] == video.stem)
     video_seconds = probe_duration(video)
 
     t0 = time.time()
     suffix = f"{video.stem}_{tier}_{lang}" + (
-        f"_{tts_provider}" if tts_provider != "edge" else "")
+        f"_{tts_provider}" if tts_provider != "edge" else "") + (
+        f"_{asr_provider or 'cloud'}" if (asr_provider and asr_provider != "openrouter")
+        else "")
     out = run(video, lang, workdir=str(workroot / suffix),
-              tts_provider=tts_provider, **TIERS[tier])
+              tts_provider=tts_provider, asr_provider=asr_provider,
+              asr_model=asr_model, **TIERS[tier])
     wall = time.time() - t0
 
     rdir = workroot / suffix / video.stem
@@ -61,8 +65,10 @@ def one_run(video: Path, lang: str, tier: str, workroot: Path,
                                             for s in report["segments"]),
                               tts_provider=report["tts_provider"])
     m["clip"], m["lang"], m["tier"] = video.stem, lang, tier
-    print(f"[eval] {video.stem} {lang} {tier}: 溢出率 {m['overflow_rate']:.0%} "
-          f"匹配率 {m['match_rate']:.0%} 耗时 {m['wall_seconds']}s", flush=True)
+    m["asr"] = asr_provider or "openrouter"
+    print(f"[eval] {video.stem} {lang} {tier} asr={m['asr']}: "
+          f"溢出率 {m['overflow_rate']:.0%} 匹配率 {m['match_rate']:.0%} "
+          f"耗时 {m['wall_seconds']}s", flush=True)
     return m
 
 
@@ -75,6 +81,10 @@ def main() -> None:
                     help="缺省跑全部消融档；只要基线用 T4_full")
     ap.add_argument("--tts", default="edge", choices=["edge", "openrouter"],
                     help="E2 TTS 选型对比用")
+    ap.add_argument("--asr", default="", choices=["", "local", "openrouter"],
+                    help="E5 ASR 选型对比用；local=本地 faster-whisper")
+    ap.add_argument("--asr-model", default=None,
+                    help="local: tiny/base/small")
     args = ap.parse_args()
 
     set_dir = Path(args.set)
@@ -93,15 +103,21 @@ def main() -> None:
             for tier in tiers:
                 results.append(one_run(video, lang, tier,
                                        ROOT / "artifacts" / "eval" / "runs",
-                                       tts_provider=args.tts))
+                                       tts_provider=args.tts,
+                                       asr_provider=args.asr,
+                                       asr_model=args.asr_model))
 
     out = ROOT / "artifacts" / "eval" / "results.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    # 按 (clip, lang, tier) 合并进历史结果：增量重跑不冲掉其他行
+    # 按 (clip, lang, tier, asr) 合并进历史结果：增量重跑不冲掉其他行
     if out.exists():
         old = json.loads(out.read_text(encoding="utf-8"))
-        key = lambda m: (m.get("clip"), m.get("lang"), m.get("tier"))
-        merged = {key(m): m for m in old}
+        key = lambda m: (m.get("clip"), m.get("lang"), m.get("tier"),
+                         m.get("asr", "openrouter"))
+        merged = {}
+        for m in old:
+            m.setdefault("asr", "openrouter")  # 旧行归一化，新键不丢历史
+            merged[key(m)] = m
         for m in results:
             merged[key(m)] = m
         results = list(merged.values())

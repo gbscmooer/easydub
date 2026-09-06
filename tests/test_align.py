@@ -33,6 +33,14 @@ class TestApplyOnsetShift:
         assert apply_onset_shift(segs, 0.0) == 0
         assert segs[0].start == 1.0
 
+    def test_negative_shift_moves_later_within_next_gap(self):
+        # whisper 时间戳偏早 → 后移：不能越过下一段起点（留 min_gap）
+        segs = [_seg(1.0, 2.0, "a", 1.0, "fit"),
+                _seg(2.10, 3.0, "b", 1.0, "fit")]
+        apply_onset_shift(segs, -0.07)
+        assert segs[0].start == 1.05 and segs[0].end == 2.05  # 只能后移 0.05
+        assert segs[1].start == 2.17 and segs[1].end == 3.07
+
 
 class TestCalibrateCps:
     def test_downward_revision_from_measured_median(self):
