@@ -17,4 +17,18 @@ jobs:
       - run: pip install -r requirements.txt
       - name: ffmpeg 就绪（单测不依赖，但导入链检查）
         run: ffmpeg -version | head -1
-      - run: .venv/bin/python -m pytest tests/ -q 2>/dev/null || python -m pytest tests/ -q
+      - name: Run tests（日志落 artifact 便于远程诊断）
+        run: python -m pytest tests/ -q --tb=short 2>&1 | tee pytest_output.txt
+        continue-on-error: true
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-log
+          path: pytest_output.txt
+      - name: 测试门禁
+        run: |
+          if grep -qE "[0-9]+ (failed|error)" pytest_output.txt; then
+            echo "::error::pytest 存在失败项"; exit 1
+          fi
+          grep -qE "[0-9]+ passed" pytest_output.txt
