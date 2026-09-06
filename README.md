@@ -23,8 +23,12 @@ cp .env.example .env   # 编辑填入 LLM_API_KEY / OPENROUTER_API_KEY
 .venv/bin/python -m easydub translate samples/sample.mp4 --lang en
 
 # 4. 查看对齐质量报告
-.venv/bin/python -m easydub report artifacts/sample --lang en
+.venv/bin/python -m easydub report artifacts/sample --lang en          # JSON 明细
+.venv/bin/python -m easydub report artifacts/sample --lang en --html   # 可视化网页
 ```
+
+每次翻译自动生成 `report.<lang>.json`（机器可读）与 `report.<lang>.html`
+（可视化：动作着色时间轴 + 悬停详情 + 汇总卡）。
 
 成品输出在 `artifacts/sample/sample.dub.en.mp4`（烧录双语字幕 + mov_text 软字幕轨 + AAC 48kHz）。
 
@@ -38,10 +42,10 @@ cp .env.example .env   # 编辑填入 LLM_API_KEY / OPENROUTER_API_KEY
 # 浏览器打开 http://127.0.0.1:8000：拖入视频 → 选语言 → 进度条 → 内嵌播放成品
 ```
 
-三端点（Dify 亦可直接调）：`POST /api/jobs`（multipart: video/lang/lipsync/bgm）、
+三端点（Dify 亦可直接调）：`POST /api/jobs`（multipart: video/lang/lipsync/bgm/subtitle_style）、
 `GET /api/jobs/{id}`（状态+阶段进度）、`GET /api/jobs/{id}/result`（成品 mp4）、
 `GET /api/jobs`（历史任务）。SQLite 任务表 `artifacts/jobs.db`，并发=1。
-前端支持保留背景音乐/口型同步开关与历史任务回看。
+前端支持保留背景音乐/口型同步开关与历史任务回看；无音轨或纯静音视频也能正常出片。
 
 ## 口型同步（lip-sync）
 

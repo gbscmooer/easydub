@@ -169,6 +169,19 @@ cd /home/kokomilove/easydub && .venv/bin/python -m uvicorn server.app:app --port
   单测打桩（fake_run 直接调 kw["progress"]）测不出这种接线 bug——修复后
   真实 E2E 5%→100% 全阶段推进，另补接线回归测试。
 
+### R8 无声视频闭环 + HTML 报告 + 样式透传（b5f5ab4）
+
+- **无声视频健壮缺口**：上传无音轨视频会在 ASR 阶段炸（extract_audio 对无流
+  视频报错）——stage_asr 前置 has_audio_stream 检查走零段落规格；静音音轨
+  （有流无语音）原声直通。两类 e2e（ffmpeg 造素材，不依赖 ASR/网络）。
+- **report_html**：report.json → 单文件可视化 HTML（动作着色时间轴、悬停
+  详情、汇总卡、逐段明细），每次 run 自动生成，`report --html` 可再生；
+  用户文本全 HTML 转义（防注入单测）。
+- **--subtitle-style CLI / subtitle_style API 字段**：管线参数终于暴露到
+  CLI 与 Web。
+- 验收：73 测试绿；Nike/c1 真实报告生成且结构断言通过（浏览器后端本环境
+  不可用，视觉验收以结构断言 + HTML 源检查代替）。
+
 ## 6. 备忘（踩坑记录，持续追加）
 
 - `.venv` 原为 macOS 拷贝，已用 uv 重建（py3.12）；旧环境备份在 `.venv.mac.bak`（确认无用后可删）。
