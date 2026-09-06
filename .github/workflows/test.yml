@@ -15,8 +15,11 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: ffmpeg 就绪（单测不依赖，但导入链检查）
-        run: ffmpeg -version | head -1
+      - name: 安装 ffmpeg（runner 镜像不自带；管道会吞退出码，必须用 which 检查）
+        run: |
+          which ffmpeg || sudo apt-get update && sudo apt-get install -y ffmpeg
+          which ffmpeg
+          ffmpeg -version | head -1
       - name: Run tests（日志落 artifact 便于远程诊断）
         id: test
         run: |
