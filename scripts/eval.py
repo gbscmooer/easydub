@@ -97,6 +97,14 @@ def main() -> None:
 
     out = ROOT / "artifacts" / "eval" / "results.json"
     out.parent.mkdir(parents=True, exist_ok=True)
+    # 按 (clip, lang, tier) 合并进历史结果：增量重跑不冲掉其他行
+    if out.exists():
+        old = json.loads(out.read_text(encoding="utf-8"))
+        key = lambda m: (m.get("clip"), m.get("lang"), m.get("tier"))
+        merged = {key(m): m for m in old}
+        for m in results:
+            merged[key(m)] = m
+        results = list(merged.values())
     out.write_text(json.dumps(results, ensure_ascii=False, indent=2),
                    encoding="utf-8")
 

@@ -28,6 +28,9 @@ cp .env.example .env   # 编辑填入 LLM_API_KEY / OPENROUTER_API_KEY
 
 成品输出在 `artifacts/sample/sample.dub.en.mp4`（烧录双语字幕 + mov_text 软字幕轨 + AAC 48kHz）。
 
+默认**保留原视频背景音乐**：配音开口时原声自动闪避（sidechaincompress），
+句间自动抬回——广告片的配乐不再被整条丢掉；`--no-bgm` 可关闭。
+
 ## Web 产品面
 
 ```bash
@@ -74,7 +77,9 @@ LATENTSYNC_DIR=~/LatentSync python server/lipsync_server.py    # :8001
 ```
 
 - **音画同步**采用"双向夹逼"：提示词按槽位秒数限制译文长度（生成端）+ 变速不变调压回
-  槽位（后处理端），仍超时则按字符预算重译，溢出记录进 `report.json`。
+  槽位（后处理端），仍超时则按实测语速反推的字符预算重译；能借句间空隙容纳的溢出
+  不算真冲突（spill），真冲突记录进 `report.json`。
+- **TTS 合成与重译并发**（4 线程），13 段配音合成 20s → 4.7s。
 - **云 TTS 固定静音头尾**会在 TTS 后自动修剪（trim_silence），否则短句对齐全毁。
 - **所有外部能力都是适配器**：LLM 双协议自动识别、ASR/TTS/口型可一键换供应商。
 - **断点续跑**：各阶段产物落盘缓存（翻译/TTS 按目标语言与译文指纹隔离），

@@ -19,6 +19,9 @@ MCP 三工具、Agent 决策闭环 + 验收日志，见 docs/EVALUATION.md 与 d
 **D10/D11/D12 打磨与包装同日完成**。仅剩 D8（Dify 编排，需内网穿透，按用户指示跳过）
 与 M6 尾项（新机器 30 分钟复现实测、3 人网页可用性实测，需真人到场）。
 
+**第二轮自主优化已完成（2026-09-06 下午，用户授权"自己布置任务自己推进"，
+见 §8）**：BGM 闪避混音、spill 溢出重分类、实测语速校准、重译止损、TTS 并发。
+
 ## 1. 环境结论（与 GOAL §4.4 的差异，以此为准）
 
 | 项 | 实际情况 |
@@ -46,7 +49,8 @@ MCP 三工具、Agent 决策闭环 + 验收日志，见 docs/EVALUATION.md 与 d
 
 ## 3. 明确不做（出界，防跑偏）
 
-- 不做说话人分离、BGM 保留混音、实时流式、4K、字幕擦除（GOAL §4.2 原样有效）
+- ~~不做说话人分离、BGM 保留混音~~（M0–M3 期约束；第二轮自主优化经用户授权，
+  **BGM 保留+闪避已实现**，说话人分离仍未做）、实时流式、4K、字幕擦除（GOAL §4.2 原样有效）
 - 不做 minimax key 注册（适配器保留即可）、不做 sync.so 实验（E3 是 M5 阶段的事）
 - 不做 Dify 画布（D8，等 M3 端点稳定后另起）
 - 不做论文/简历素材整理（M6）
@@ -90,6 +94,41 @@ cd /home/kokomilove/easydub && .venv/bin/python -m uvicorn server.app:app --port
 .venv/bin/python -m easydub translate 视频.mp4 --lang zh --lipsync latentsync
 ```
 
+## 8. 第二轮自主优化记录（2026-09-06 下午）
+
+> 背景：M0–M5 与 D 系列收尾后，用户指示"自己布置任务自己推进优化，自己找创新点"。
+> 三项全部有量化验收，均已提交（de50a02 / 1b94704 / 7b1ebd2）。
+
+### R1 BGM 保留 + 配音自动闪避（de50a02）【创新点】
+
+- 问题：`stage_mix` 用静音底轨，原视频音频（广告配乐！）整条被丢掉。
+- 方案：ffmpeg `sidechaincompress`，配音为侧链触发（threshold=0.03, ratio=8,
+  attack=25ms, release=400ms），原声压低混入、句间自动抬回；`alimiter` 防削波；
+  配音流 `asplit` 两路（侧链 + 混合各一）。默认开启，`--no-bgm` 可关。
+- 约束：口型对齐只吃纯配音轨（BGM 污染口型特征），`stage_mix` 返回
+  `{"dub": 纯轨, "render": 混音轨}`；零段落视频原声直通。
+- 验收：Nike 句间 -91dB→-29dB（音乐回归），说话中配音电平几乎不变；
+  滤镜图纯函数 + bandpass 频段隔离法单测 4 项。
+
+### R2 溢出重分类 + 实测语速 + 止损（1b94704）
+
+- spill 改判（`align.reclassify_spill`）：溢出音频撞不到下一句配音/视频结尾
+  的段改判 spill——不算真冲突、不烧 LLM、不计溢出率。听感依据：音频本来就
+  按起始秒定位，自然延后进空隙 = "准时开始、停顿里收尾"。
+- `align.calibrate_cps`：重译预算按本次 TTS 实测语速中位数收紧（只下修、
+  下限 60% 表值），替代静态 CPS 表换供应商不漂移。
+- 止损：重译某轮无净减少溢出即退出（预算到垫尾极限，再收紧无益）。
+- 验收：Nike 段10（0.24s 槽位）重跑 2 轮 LLM → 0 调用（5.3s，原 25.7s）；
+  es c1 溢出 1→0，E4 全绿；消融梯度改用"未压回率(spill+overflow)"口径仍成立
+  （EVALUATION.md 双口径表）。
+
+### R3 TTS/重译并发（7b1ebd2）
+
+- 未命中缓存的合成 + 重译轮内多段 LLM 调用走 `ThreadPoolExecutor(4)`；
+  缓存命中的段仍串行（本地 probe 无收益）。
+- 验收：edge-tts 13 段串行 20.0s → 并发 4.7s（**4.3×**）。
+- 顺手：eval.py results.json 改为按 (clip, lang, tier) 合并写入，增量重跑不冲历史。
+
 ## 6. 备忘（踩坑记录，持续追加）
 
 - `.venv` 原为 macOS 拷贝，已用 uv 重建（py3.12）；旧环境备份在 `.venv.mac.bak`（确认无用后可删）。
@@ -102,3 +141,9 @@ cd /home/kokomilove/easydub && .venv/bin/python -m uvicorn server.app:app --port
 - 服务器壳 `CMD_TEMPLATE` 用 `sys.executable`，别用裸 `python`（conda 环境的 shell 里没有）。
 - 评测跑批时每档用独立 workdir（`runs/<clip>_<tier>_<lang>`），否则翻译缓存会让消融档失效。
 - edge-tts 的 `rate` 参数不接受 None，必须条件传参；"-20%" 慢语速用于 c5 素材。
+- **ffmpeg `sine` 源默认振幅仅 ~0.09（-21dB）**：闪避/压缩类滤镜的测试音频必须
+  高增益（volume≈7）才能触发深压缩，否则误判"滤镜无效"。
+- `sidechaincompress` 的侧链输入会消耗流，filtergraph 里同一条流只能被消费一次，
+  配音要 `asplit=2` 分成侧链路和混合路。
+- 评测重跑若只覆盖部分矩阵，eval.py 现按 (clip, lang, tier) 合并进 results.json
+  （旧行为是整体覆盖，会冲掉没重跑的行）。

@@ -72,6 +72,7 @@ def run_metrics(report: dict, wall_seconds: float, video_seconds: float,
     out = {
         "segments": summary["total"],
         "overflow_rate": overflow_rate,
+        "spill_rate": round(summary.get("spill", 0) / total, 4),
         "match_rate": match_rate,
         "wall_seconds": round(wall_seconds, 1),
         "rt_factor": round(wall_seconds / video_seconds, 2) if video_seconds else None,
