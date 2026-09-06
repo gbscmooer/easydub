@@ -8,6 +8,7 @@ TTS 按译文 MD5），断点续跑只补失败阶段。
 import hashlib
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .align import calibrate_cps, find_overflow, plan_alignment, reclassify_spill
@@ -24,6 +25,10 @@ from .services.translator import CPS_TABLE, EchoTranslator, LLMTranslator
 
 # Web 端注入的进度回调（并发=1，模块级单回调即可）
 _progress_cb = None
+
+# TTS/重译的并发线程数：都是网络 IO，串行是纯浪费；
+# 4 是 edge-tts 免费通道无报限流、LLM 供应商也普遍友好的保守值
+IO_WORKERS = 4
 
 
 def _log(stage: str, msg: str) -> None:
@@ -109,7 +114,8 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
                     allow_atempo: bool = True,
                     retry_overflow: bool = True, tts_rate: str = None,
                     glossary: dict = None, max_retry_rounds: int = 2,
-                    video_total: float = None) -> dict:
+                    video_total: float = None,
+                    max_workers: int = IO_WORKERS) -> dict:
     """返回 {"tts": 名称, "overflow_before_retry": 首轮溢出数,
     "retry_rounds": 轮数, "measured_cps": 实测语速}"""
     tts = make_tts(tts_provider, target_lang, voice, settings, rate=tts_rate)
@@ -136,6 +142,15 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
                               allow_atempo=allow_atempo)
         seg.tempo, seg.action = plan["tempo"], plan["action"]
 
+    # 未命中缓存的合成并发跑（缓存命中只需本地 probe，串行无妨）
+    todo = [(i, seg) for i, seg in enumerate(segments)
+            if not _tts_path(i, seg.translated).exists()]
+    if len(todo) > 1 and max_workers > 1:
+        _log("tts", f"{len(todo)} 段需合成，{max_workers} 并发...")
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            list(ex.map(lambda p: _synth(p[1].translated,
+                                         _tts_path(p[0], p[1].translated)),
+                        todo))
     for i, seg in enumerate(segments):
         _align(i, seg)
 
@@ -165,13 +180,23 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
                                glossary=glossary)
             _log("retry", f"第{rounds}轮：{n_round_start} 段配音超时，"
                           f"按字符预算重译（实测语速 {cps} 字符/秒）")
-            for p in overflows:
+
+            def _redo(p):
                 seg = segments[p["index"]]
                 budget = max(2, int(p["budget"] * shrink))
-                new_text = tr.retranslate(seg.text, seg.translated, budget)
+                return p["index"], budget, \
+                    tr.retranslate(seg.text, seg.translated, budget)
+
+            if len(overflows) > 1 and max_workers > 1:
+                with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                    results = list(ex.map(_redo, overflows))
+            else:
+                results = [_redo(p) for p in overflows]
+            for idx, budget, new_text in results:
+                seg = segments[idx]
                 seg.translated = new_text
-                _align(p["index"], seg)
-                _log("retry", f"段{p['index']}：预算 {budget} 字符 → "
+                _align(idx, seg)
+                _log("retry", f"段{idx}：预算 {budget} 字符 → "
                               f"译文 {len(new_text)} 字符，配音 "
                               f"{seg.audio_duration:.2f}s，动作 {seg.action}")
             reclassify_spill(segments, video_total)
