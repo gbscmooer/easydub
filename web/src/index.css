@@ -1,0 +1,43 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #0f1115;
+  color: #e8eaf0;
+}
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px; }
+h1 { font-size: 28px; margin: 0 0 4px; }
+.sub { color: #9aa1af; margin-top: 0; }
+.drop {
+  border: 2px dashed #3a4050;
+  border-radius: 14px;
+  padding: 56px 24px;
+  text-align: center;
+  cursor: pointer;
+  margin: 28px 0 16px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.drop.over { border-color: #6c8cff; background: #161a24; }
+.row { display: flex; gap: 12px; align-items: center; }
+select, button, a.btn {
+  background: #1a1f2c;
+  color: #e8eaf0;
+  border: 1px solid #333a4a;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 15px;
+}
+button { cursor: pointer; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:not(:disabled) { background: #3b64f4; border-color: #3b64f4; }
+.progress { text-align: center; padding: 48px 0; }
+.spinner {
+  width: 36px; height: 36px; margin: 0 auto 16px;
+  border: 3px solid #2a3040; border-top-color: #6c8cff;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.result video { width: 100%; border-radius: 12px; background: #000; }
+.result .row { margin-top: 14px; }
+.error { color: #ff7a7a; padding: 24px 0; }
