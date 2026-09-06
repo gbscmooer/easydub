@@ -101,6 +101,10 @@ def write_html_report(report: dict, dst) -> Path:
                  f"重译 {report.get('retry_rounds', 0)} 轮"]
     if report.get("measured_cps"):
         meta_bits.append(f"实测语速 {report['measured_cps']} 字符/秒")
+    timings = report.get("stage_timings") or {}
+    for stage in ("asr", "translate", "tts_align", "mix", "lipsync"):
+        if stage in timings:
+            meta_bits.append(f"{stage} {timings[stage]}s")
     src_name = Path(report.get("video", "")).name
 
     page = f"""<!doctype html><html lang="zh"><head><meta charset="utf-8">

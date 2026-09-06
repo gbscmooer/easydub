@@ -9,6 +9,8 @@ REPORT = {
     "retry_rounds": 1,
     "measured_cps": 13.2,
     "keep_bgm": True,
+    "stage_timings": {"asr": 1.2, "translate": 2.3, "tts_align": 3.1,
+                      "mix": 0.4, "lipsync": 0.0},
     "summary": {"total": 3, "fit": 1, "atempo": 1, "spill": 1,
                 "overflow": 0, "overflow_before_retry": 1},
     "segments": [
@@ -32,6 +34,7 @@ def test_html_contains_summary_and_meta(tmp_path):
     assert "对齐质量报告" in html
     assert "en-US-JennyNeural" in html and "13.2" in html
     assert "保留+闪避" in html
+    assert "tts_align 3.1s" in html  # 分阶段计时进 meta 区
     assert html.count('class="card"') == 5  # 总数/原速/变速/借空隙/溢出
 
 

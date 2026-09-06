@@ -385,6 +385,7 @@ def stage_render(video_for_mux: Path, track: Path, segments: list,
         "measured_cps": stats.get("measured_cps"),
         "voice": stats.get("voice"),
         "keep_bgm": bgm_kept,
+        "stage_timings": stats.get("stage_timings"),
         "segments": [
             {"i": i, "start": round(s.start, 3), "end": round(s.end, 3),
              "slot": round(s.slot, 2), "tts": round(s.audio_duration, 2),
@@ -435,8 +436,17 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
     if asr_onset_shift is None:
         asr_onset_shift = 0.12 if provider == "openrouter" else -0.07
 
-    segments = stage_asr(video, out_dir, settings, asr_provider=asr_provider,
-                         asr_model=asr_model, onset_shift=asr_onset_shift)
+    timings: dict = {}
+
+    def timed(name, fn, *args, **kwargs):
+        t = time.time()
+        result = fn(*args, **kwargs)
+        timings[name] = round(time.time() - t, 2)
+        return result
+
+    segments = timed("asr", stage_asr, video, out_dir, settings,
+                     asr_provider=asr_provider, asr_model=asr_model,
+                     onset_shift=asr_onset_shift)
     if not segments:
         # 规格要求无声视频"正常完成（零段落）"：跳过翻译/配音，出静音成品
         _log("asr", "未识别到语音，按零段落处理：输出静音成品")
@@ -449,25 +459,27 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
             voice = picked
             _log("voice", f"说话人基频 ≈{f0:.0f}Hz → 自动选音色 {picked}")
 
-    segments = stage_translate(segments, target_lang, out_dir, settings,
-                               translator_mode=translator_mode,
-                               limit_translation=limit_translation,
-                               glossary=glossary)
-    tts_stats = stage_tts_align(segments, target_lang, out_dir, settings,
-                                tts_provider=tts_provider,
-                                translator_mode=translator_mode, voice=voice,
-                                allow_atempo=allow_atempo,
-                                retry_overflow=retry_overflow,
-                                tts_rate=tts_rate, glossary=glossary,
-                                video_total=probe_duration(video))
-    tracks = stage_mix(segments, target_lang, video, out_dir,
-                       keep_bgm=keep_bgm)
-    video_for_mux = stage_lipsync(video, tracks["dub"], target_lang, out_dir,
-                                  settings, lipsync_provider)
-    out_video = stage_render(video_for_mux, tracks["render"], segments,
-                             target_lang, video, out_dir, burn_subs=burn_subs,
-                             tts_name=tts_stats["tts"], tts_stats=tts_stats,
-                             bgm_kept=tracks["render"] != tracks["dub"])
+    segments = timed("translate", stage_translate, segments, target_lang,
+                     out_dir, settings, translator_mode=translator_mode,
+                     limit_translation=limit_translation, glossary=glossary)
+    tts_stats = timed("tts_align", stage_tts_align, segments, target_lang,
+                      out_dir, settings,
+                      tts_provider=tts_provider,
+                      translator_mode=translator_mode, voice=voice,
+                      allow_atempo=allow_atempo,
+                      retry_overflow=retry_overflow,
+                      tts_rate=tts_rate, glossary=glossary,
+                      video_total=probe_duration(video))
+    tts_stats["stage_timings"] = timings
+    tracks = timed("mix", stage_mix, segments, target_lang, video, out_dir,
+                   keep_bgm=keep_bgm)
+    video_for_mux = timed("lipsync", stage_lipsync, video, tracks["dub"],
+                          target_lang, out_dir, settings, lipsync_provider)
+    out_video = timed("render", stage_render, video_for_mux,
+                      tracks["render"], segments, target_lang, video,
+                      out_dir, burn_subs=burn_subs,
+                      tts_name=tts_stats["tts"], tts_stats=tts_stats,
+                      bgm_kept=tracks["render"] != tracks["dub"])
 
     _log("done", f"输出 {out_video}，耗时 {time.time() - t0:.1f}s，"
                  f"对齐 {json.loads((out_dir / f'report.{target_lang}.json')

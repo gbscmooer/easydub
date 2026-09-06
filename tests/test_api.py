@@ -1,6 +1,7 @@
 """Web 三端点测试：pipeline 打桩，不跑真实流水线。"""
 import importlib
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -72,6 +73,36 @@ def test_bgm_and_lipsync_flags_reach_pipeline(client, monkeypatch):
     assert seen["keep_bgm"] is False
     assert seen["lipsync_provider"] == "latentsync"
     assert seen["subtitle_style"] == "FontSize=30,Outline=2"
+
+
+def test_job_report_endpoint(client, tmp_path, monkeypatch):
+    import server.app as app_mod
+    monkeypatch.setattr(app_mod, "ROOT", tmp_path)
+
+    def fake_run(video, lang, **kw):
+        # pipeline 会把 report.<lang>.html 写到 artifacts/<上传文件名stem>/ 下
+        out_dir = tmp_path / "artifacts" / Path(video).stem
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"report.{lang}.html").write_text("<h1>ok</h1>")
+        for stage in ("asr", "done"):
+            kw["progress"](stage)
+        return video
+
+    monkeypatch.setattr(app_mod, "run_managed", fake_run)
+    import time
+    r = client.post("/api/jobs",
+                    files={"video": ("a.mp4", b"x", "video/mp4")},
+                    data={"lang": "en"})
+    jid = r.json()["job_id"]
+    for _ in range(50):
+        if client.get(f"/api/jobs/{jid}").json()["state"] == "done":
+            break
+        time.sleep(0.05)
+    resp = client.get(f"/api/jobs/{jid}/report")
+    assert resp.status_code == 200
+    assert "<h1>ok</h1>" in resp.text
+    # 未完成任务与不存在任务
+    assert client.get("/api/jobs/nope/report").status_code == 404
 
 
 def test_job_list_returns_history(client):

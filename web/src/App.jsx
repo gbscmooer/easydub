@@ -181,6 +181,10 @@ export default function App() {
             <a className="btn" href={`/api/jobs/${jobId}/result`} download>
               下载成品
             </a>
+            <a className="btn" href={`/api/jobs/${jobId}/report`} target="_blank"
+               rel="noreferrer">
+              质量报告
+            </a>
             <button onClick={reset}>再译一个</button>
           </div>
         </div>

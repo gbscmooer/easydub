@@ -160,6 +160,22 @@ def job_result(job_id: str):
                         filename=Path(row["result"]).name)
 
 
+@app.get("/api/jobs/{job_id}/report")
+def job_report(job_id: str):
+    """任务的可视化 HTML 对齐报告（pipeline 每次 run 自动生成）。"""
+    with _db() as con:
+        row = con.execute("SELECT state, lang FROM jobs WHERE id=?",
+                          (job_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, f"任务不存在: {job_id}")
+    if row["state"] != "done":
+        raise HTTPException(409, f"任务未完成（{row['state']}）")
+    html_path = ROOT / "artifacts" / job_id / f"report.{row['lang']}.html"
+    if not html_path.exists():
+        raise HTTPException(404, "报告文件不存在")
+    return FileResponse(html_path, media_type="text/html")
+
+
 # 前端构建产物存在时托管（放最后，避免吞掉 /api 路由）
 _dist = ROOT / "web" / "dist"
 if _dist.is_dir():

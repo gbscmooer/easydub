@@ -40,10 +40,15 @@ def one_run(video: Path, lang: str, tier: str, workroot: Path,
     info = next(m for m in meta if m["name"] == video.stem)
     video_seconds = probe_duration(video)
 
+    # 结果键里的 ASR 通道：local 默认指 base；显式传其他档位要区分（E5 补充档）
+    asr_tag = asr_provider or "openrouter"
+    if asr_model and asr_model != "base":
+        asr_tag += f":{asr_model}"
+
     t0 = time.time()
     suffix = f"{video.stem}_{tier}_{lang}" + (
         f"_{tts_provider}" if tts_provider != "edge" else "") + (
-        f"_{asr_provider or 'cloud'}" if (asr_provider and asr_provider != "openrouter")
+        f"_{asr_tag}" if (asr_provider and asr_provider != "openrouter")
         else "")
     out = run(video, lang, workdir=str(workroot / suffix),
               tts_provider=tts_provider, asr_provider=asr_provider,
@@ -65,7 +70,7 @@ def one_run(video: Path, lang: str, tier: str, workroot: Path,
                                             for s in report["segments"]),
                               tts_provider=report["tts_provider"])
     m["clip"], m["lang"], m["tier"] = video.stem, lang, tier
-    m["asr"] = asr_provider or "openrouter"
+    m["asr"] = asr_tag
     print(f"[eval] {video.stem} {lang} {tier} asr={m['asr']}: "
           f"溢出率 {m['overflow_rate']:.0%} 匹配率 {m['match_rate']:.0%} "
           f"耗时 {m['wall_seconds']}s", flush=True)
