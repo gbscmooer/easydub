@@ -118,6 +118,8 @@ def build_dub_track(clips: List[Tuple[float, str]], total: float, dst) -> Path:
     """把若干段 (起始秒, 音频文件) 放到一条 total 秒的静音底轨上。
 
     用 adelay 定位 + amix 叠加（normalize=0 防止多段混音时被平均降音量）。
+    静音底轨必须参与 amix：否则输出被最后一段配音截短，长视频的
+    尾巴会整段没声（口型/切片按 total 取音频时会拿到空文件）。
     """
     dst = Path(dst)
     if not clips:
@@ -130,7 +132,9 @@ def build_dub_track(clips: List[Tuple[float, str]], total: float, dst) -> Path:
     cmd: List[str] = ["ffmpeg", "-y"]
     for _, p in clips:
         cmd += ["-i", str(p)]
-    cmd += ["-f", "lavfi", "-t", f"{total:.3f}", "-i", "anullsrc=r=44100:cl=mono"]
+    base_idx = len(clips)
+    cmd += ["-f", "lavfi", "-t", f"{total:.3f}",
+            "-i", "anullsrc=r=44100:cl=mono"]
 
     filters, parts = [], []
     for i, (start, _) in enumerate(clips):
@@ -140,7 +144,11 @@ def build_dub_track(clips: List[Tuple[float, str]], total: float, dst) -> Path:
             f"adelay={ms}:all=1[s{i}]"
         )
         parts.append(f"[s{i}]")
-    filters.append("".join(parts) + f"amix=inputs={len(clips)}:normalize=0[m]")
+    # 底轨补齐到 total 秒：amix duration=longest 以底轨为准
+    filters.append(f"[{base_idx}:a]aformat=channel_layouts=mono[b]")
+    parts.append("[b]")
+    filters.append("".join(parts) +
+                   f"amix=inputs={len(clips) + 1}:normalize=0[m]")
 
     cmd += [
         "-filter_complex", ";".join(filters),

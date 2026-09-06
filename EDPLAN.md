@@ -92,6 +92,11 @@ cd ~/LatentSync && LATENTSYNC_DIR=~/LatentSync \
 cd /home/kokomilove/easydub && .venv/bin/python -m uvicorn server.app:app --port 8000
 # 3) 命令行全流程（不开口型时无需第 1 步服务）
 .venv/bin/python -m easydub translate 视频.mp4 --lang zh --lipsync latentsync
+
+# 4) 标准验证片段（TED 1:50-2:00，10s 纯人物讲话，口型理想素材）
+ffmpeg -ss 110 -to 120 -i "The Sneaky Language Tricks Cults Use to Influence You  Amanda Montell  TED - TED (720p, h264).mp4" \
+  -c:v libx264 -crf 20 -preset fast -c:a aac samples/ted_std10.mp4   # 必须带音轨
+.venv/bin/python -m easydub translate samples/ted_std10.mp4 --lang zh --lipsync latentsync
 ```
 
 ## 8. 第二轮自主优化记录（2026-09-06 下午）

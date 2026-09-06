@@ -171,20 +171,31 @@ def test_delete_terminal_job(client):
     assert client.delete(f"/api/jobs/{jid}").status_code == 404
 
 
-def test_delete_running_job_409(client):
-    import sqlite3, time
+def test_delete_running_job_409(client, monkeypatch):
+    import threading, time
+    import server.app as app_mod
+    release = threading.Event()
+
+    def blocking_run(video, lang, **kw):
+        release.wait(timeout=5)  # 任务保持进行中，直到测试放行
+        for stage in ("asr", "done"):
+            kw["progress"](stage)
+        return video
+
+    monkeypatch.setattr(app_mod, "run_managed", blocking_run)
     r = client.post("/api/jobs",
                     files={"video": ("a.mp4", b"x", "video/mp4")},
                     data={"lang": "en"})
     jid = r.json()["job_id"]
-    # 抢在 worker 结束前把状态改成 running（打桩流水线很快）
-    import server.app as app_mod
-    with sqlite3.connect(app_mod.DB_PATH) as con:
-        con.execute("UPDATE jobs SET state='running' WHERE id=?", (jid,))
     try:
+        # 提交后 worker 还没结束：任务处于进行中（queued），删除必须拒绝
         assert client.delete(f"/api/jobs/{jid}").status_code == 409
     finally:
-        time.sleep(0.3)  # 让 worker 收尾，不污染后续断言
+        release.set()
+        for _ in range(50):
+            if client.get(f"/api/jobs/{jid}").json()["state"] == "done":
+                break
+            time.sleep(0.05)
 
 
 def test_run_managed_wires_progress_callback(monkeypatch):

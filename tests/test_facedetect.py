@@ -1,5 +1,22 @@
-"""人脸段聚类纯逻辑单测：不需要 ffmpeg / cv2 数据。"""
-from easydub.services.facedetect import cluster_hits
+"""人脸段聚类与静态脸过滤的纯逻辑单测：不需要 ffmpeg / cv2 数据。"""
+from easydub.services.facedetect import cluster_hits, face_qualifies
+
+
+class TestFaceQualifies:
+    def test_photo_face_rejected_by_low_motion(self):
+        # TED 实测：幻灯片照片脸 ratio 高达 0.33 但 motion <0.1——静态，不出口型
+        assert face_qualifies(0.33, 0.08) is False
+
+    def test_live_speaker_passes(self):
+        # 说话人实测 motion 24-58
+        assert face_qualifies(0.15, 24.0) is True
+
+    def test_first_sample_without_history_passes(self):
+        # 首帧无前帧可比：放行，由聚类 min_len 兜底（照片第二帧必低动量）
+        assert face_qualifies(0.33, None) is True
+
+    def test_too_small_face_rejected(self):
+        assert face_qualifies(0.05, 30.0) is False
 
 
 class TestClusterHits:
