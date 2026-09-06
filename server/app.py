@@ -113,10 +113,12 @@ async def submit_job(video: UploadFile = File(...),
             f.write(chunk)
 
     with _db() as con:
-        con.execute("INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?)",
-                    (job_id, "queued", "upload", lang, str(dst), "", "",
-                     time.time()))
-    threading.Thread(target=_worker, args=(job_id, dst, lang),
+        con.execute(
+            "INSERT INTO jobs (id, state, stage, lang, video, result, error,"
+            " created, lipsync, percent) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (job_id, "queued", "upload", lang, str(dst), "", "", time.time(),
+             int(lipsync), STAGE_PERCENT.get("upload", 0)))
+    threading.Thread(target=_worker, args=(job_id, dst, lang, lipsync),
                      daemon=True).start()
     return {"job_id": job_id}
 
