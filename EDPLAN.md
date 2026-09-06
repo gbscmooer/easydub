@@ -129,6 +129,28 @@ cd /home/kokomilove/easydub && .venv/bin/python -m uvicorn server.app:app --port
 - 验收：edge-tts 13 段串行 20.0s → 并发 4.7s（**4.3×**）。
 - 顺手：eval.py results.json 改为按 (clip, lang, tier) 合并写入，增量重跑不冲历史。
 
+### R4 起点前移补偿 + 缓存一致性修复（bbfc582）
+
+- `align.apply_onset_shift`：云 ASR 起点系统性偏晚 ~0.15s（eval 实测 mean
+  0.156），起止整体前移补偿（保槽位，预算/对齐不受扰），借句间空隙受上一段
+  终点约束（留 0.05s 防贴脸）；云 ASR 默认 0.12s，`--onset-shift` 可覆盖。
+- **连带修出真 bug**：`stage_translate` 缓存命中直接 `return cached`（旧
+  Segment 对象），ASR 侧任何时间轴修正都被静默回滚——改为只借译文。
+- **TTS 健壮性**（被评测重跑连续炸出）：edge-tts WSS 瞬断 → `http.retry_call`
+  退避重试；崩溃残留截断 mp3 → `.part` 原子写 + 损坏缓存自动重合成。
+- 验收：字幕偏移 mean c1 0.156→0.036、c3 0.167→0.047（≤100ms 目标线达成）；
+  c1/c3 全矩阵（en/es/ja × T1-T4）偏移全部 ≤0.1。
+
+### R5 配音音色自适应（a2e3277）
+
+- 原实现所有语言固定男声默认音色，女声说话人配男声很出戏。
+- `services/voice_match.py`：FFT 自相关法估说话人 f0（仅 numpy，40ms 帧 /
+  10ms 步进 / [70,350]Hz 带内归一化峰 >0.5 为浊音帧）；切最长 3 段纯语音
+  探测避开 BGM，中位数 + 160Hz 分界选 edge 男女声。
+- 真实素材验证：Nike 男声 111Hz→AndrewNeural、TED 女声 216Hz→JennyNeural。
+- `--voice` 显式指定优先；`--no-auto-voice` 可关；**音色并入 TTS 缓存键**
+  （原先换 `--voice` 会错拿旧音频，一并修复）；report 记录 `voice`。
+
 ## 6. 备忘（踩坑记录，持续追加）
 
 - `.venv` 原为 macOS 拷贝，已用 uv 重建（py3.12）；旧环境备份在 `.venv.mac.bak`（确认无用后可删）。
@@ -147,3 +169,9 @@ cd /home/kokomilove/easydub && .venv/bin/python -m uvicorn server.app:app --port
   配音要 `asplit=2` 分成侧链路和混合路。
 - 评测重跑若只覆盖部分矩阵，eval.py 现按 (clip, lang, tier) 合并进 results.json
   （旧行为是整体覆盖，会冲掉没重跑的行）。
+- **翻译缓存不能整对象返回**：stage_translate 命中缓存只借译文、时间轴用当前
+  ASR 的——否则 ASR 侧时间轴修正会被旧对象静默回滚（R4 实测踩中）。
+- f0/能量门限别用"中位数×N"：恒幅信号（测试音、持续 BGM）会把全部帧误杀，
+  用"相对最响帧的比例"（0.25×max）。
+- `sine` 源 + `volume` 组合在 300Hz/7.0 增益下才是 -4dBFS：做压缩类滤镜测试时
+  先 `volumedetect` 校准实际电平，别按生成参数想当然。
