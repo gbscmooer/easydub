@@ -30,6 +30,8 @@ def main(argv=None) -> int:
                    help="ASR 起点前移补偿秒数（缺省：云 ASR 0.12 / 本地 0）")
     t.add_argument("--no-auto-voice", action="store_true",
                    help="关闭音色自适应（默认按说话人基频自动选男女声）")
+    t.add_argument("--subtitle-style", default=None,
+                   help="ASS force_style 样式串（如 FontSize=24,Outline=2）")
     t.add_argument("--lipsync", default="none",
                    choices=["none", "syncso", "latentsync"])
     t.add_argument("--no-subs", action="store_true", help="不烧录字幕")
@@ -41,6 +43,8 @@ def main(argv=None) -> int:
     r.add_argument("run_dir", help="artifacts/<视频名> 目录")
     r.add_argument("--lang", default=None,
                    help="目标语言；缺省时打印目录下所有语言的报告")
+    r.add_argument("--html", action="store_true",
+                   help="把报告渲染成可视化 HTML（report.<lang>.html）")
 
     l = sub.add_parser("lipsync-test",
                        help="单测 lip-sync 服务：视频+音频 -> 口型视频（不跑全流程）")
@@ -64,7 +68,9 @@ def main(argv=None) -> int:
                   asr_model=args.asr_model,
                   burn_subs=not args.no_subs, lipsync_provider=args.lipsync,
                   keep_bgm=not args.no_bgm, asr_onset_shift=args.onset_shift,
-                  auto_voice=not args.no_auto_voice)
+                  auto_voice=not args.no_auto_voice,
+                  **({"subtitle_style": args.subtitle_style}
+                     if args.subtitle_style else {}))
         print(f"\n成品: {out}")
         return 0
 
@@ -89,6 +95,11 @@ def main(argv=None) -> int:
         print(f"未找到报告: {run_dir}/report*.json", file=sys.stderr)
         return 1
     for p in paths:
+        if args.html:
+            from .report_html import write_html_report_file
+            out = write_html_report_file(p)
+            print(f"HTML 报告: {out}")
+            continue
         print(json.dumps(json.loads(p.read_text(encoding="utf-8")),
                          ensure_ascii=False, indent=2))
     return 0

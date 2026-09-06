@@ -63,6 +63,12 @@ def stage_asr(video: Path, out_dir: Path, settings: Settings, *,
         _log("asr", f"命中缓存，{len(segments)} 段")
         return segments
 
+    if not has_audio_stream(video):
+        # 无音轨视频走零段落规格：正常出片（静音成品），而不是 ffmpeg 报错
+        _log("asr", "原视频无音轨，按零段落处理")
+        save_segments([], seg_file)
+        return []
+
     wav = extract_audio(video, out_dir / "audio_zh.wav")
     provider = asr_provider or settings.asr_provider
     if provider == "openrouter":
@@ -398,6 +404,8 @@ def stage_render(video_for_mux: Path, track: Path, segments: list,
     }
     (out_dir / f"report.{target_lang}.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    from .report_html import write_html_report
+    write_html_report(report, out_dir / f"report.{target_lang}.html")
     return out_video
 
 

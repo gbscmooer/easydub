@@ -73,7 +73,7 @@ _init_db()
 
 
 def _worker(job_id: str, video: Path, lang: str, lipsync: bool,
-            bgm: bool = True) -> None:
+            bgm: bool = True, subtitle_style: str = "") -> None:
     def progress(stage: str) -> None:
         with _db() as con:
             con.execute("UPDATE jobs SET stage=?, "
@@ -81,10 +81,12 @@ def _worker(job_id: str, video: Path, lang: str, lipsync: bool,
                         (stage, STAGE_PERCENT.get(stage, 0), job_id))
 
     try:
-        out = run_managed(video, lang, progress=progress,
-                          lipsync_provider="latentsync" if lipsync else "none",
-                          keep_bgm=bgm,
-                          workdir=str(ROOT / "artifacts"))
+        kw = dict(progress=progress,
+                  lipsync_provider="latentsync" if lipsync else "none",
+                  keep_bgm=bgm, workdir=str(ROOT / "artifacts"))
+        if subtitle_style:
+            kw["subtitle_style"] = subtitle_style
+        out = run_managed(video, lang, **kw)
         with _db() as con:
             con.execute("UPDATE jobs SET state='done', stage='done', result=? "
                         "WHERE id=?", (str(out), job_id))
@@ -100,7 +102,8 @@ def _worker(job_id: str, video: Path, lang: str, lipsync: bool,
 async def submit_job(video: UploadFile = File(...),
                      lang: str = Form("en"),
                      lipsync: bool = Form(False),
-                     bgm: bool = Form(True)) -> dict:
+                     bgm: bool = Form(True),
+                     subtitle_style: str = Form("")) -> dict:
     ext = Path(video.filename or "").suffix.lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"仅支持 {'/'.join(ALLOWED_EXT)}，收到 {ext or '无名文件'}")
@@ -122,7 +125,8 @@ async def submit_job(video: UploadFile = File(...),
             " created, lipsync, percent, bgm) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (job_id, "queued", "upload", lang, str(dst), "", "", time.time(),
              int(lipsync), STAGE_PERCENT.get("upload", 0), int(bgm)))
-    threading.Thread(target=_worker, args=(job_id, dst, lang, lipsync, bgm),
+    threading.Thread(target=_worker,
+                     args=(job_id, dst, lang, lipsync, bgm, subtitle_style),
                      daemon=True).start()
     return {"job_id": job_id}
 

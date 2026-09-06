@@ -60,8 +60,8 @@ def test_bgm_and_lipsync_flags_reach_pipeline(client, monkeypatch):
     monkeypatch.setattr(app_mod, "run_managed", fake_run)
     resp = client.post("/api/jobs",
                        files={"video": ("a.mp4", b"x", "video/mp4")},
-                       data={"lang": "en", "bgm": "false",
-                             "lipsync": "true"})
+                       data={"lang": "en", "bgm": "false", "lipsync": "true",
+                             "subtitle_style": "FontSize=30,Outline=2"})
     assert resp.status_code == 200
     import time
     for _ in range(50):
@@ -71,6 +71,7 @@ def test_bgm_and_lipsync_flags_reach_pipeline(client, monkeypatch):
         time.sleep(0.05)
     assert seen["keep_bgm"] is False
     assert seen["lipsync_provider"] == "latentsync"
+    assert seen["subtitle_style"] == "FontSize=30,Outline=2"
 
 
 def test_job_list_returns_history(client):
