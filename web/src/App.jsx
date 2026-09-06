@@ -127,8 +127,12 @@ export default function App() {
       {job && busy && (
         <div className="progress">
           <div className="spinner" />
+          <div className="bar">
+            <div className="bar-fill" style={{ width: `${job.percent || 5}%` }} />
+          </div>
           <p>
-            {STAGE_LABEL[job.stage] || job.stage || "排队中"}…（任务 {jobId}）
+            {STAGE_LABEL[job.stage] || job.stage || "排队中"}
+            （{job.percent || 5}%，任务 {jobId}）
           </p>
         </div>
       )}

@@ -41,3 +41,8 @@ button:not(:disabled) { background: #3b64f4; border-color: #3b64f4; }
 .result video { width: 100%; border-radius: 12px; background: #000; }
 .result .row { margin-top: 14px; }
 .error { color: #ff7a7a; padding: 24px 0; }
+.bar {
+  width: 420px; max-width: 90%; height: 8px; margin: 0 auto 14px;
+  background: #232a38; border-radius: 4px; overflow: hidden;
+}
+.bar-fill { height: 100%; background: #3b64f4; transition: width 0.6s; }

@@ -60,11 +60,12 @@ def _init_db() -> None:
                 created REAL NOT NULL
             )
         """)
-        try:  # 旧库平滑加列
-            con.execute("ALTER TABLE jobs ADD COLUMN lipsync INTEGER "
-                        "NOT NULL DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
+        for col in ("lipsync INTEGER NOT NULL DEFAULT 0",
+                    "percent INTEGER NOT NULL DEFAULT 0"):
+            try:  # 旧库平滑加列
+                con.execute(f"ALTER TABLE jobs ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
 
 
 _init_db()
@@ -73,7 +74,9 @@ _init_db()
 def _worker(job_id: str, video: Path, lang: str, lipsync: bool) -> None:
     def progress(stage: str) -> None:
         with _db() as con:
-            con.execute("UPDATE jobs SET stage=? WHERE id=?", (stage, job_id))
+            con.execute("UPDATE jobs SET stage=?, "
+                        "percent=MAX(percent, ?) WHERE id=?",
+                        (stage, STAGE_PERCENT.get(stage, 0), job_id))
 
     try:
         out = run_managed(video, lang, progress=progress,
