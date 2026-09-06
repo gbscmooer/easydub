@@ -10,7 +10,7 @@
 |----|------|------|----------|------|
 | 6 | 可观测性 + 数据 + 产品接线 + 架构文档 | R11 分阶段计时进报告；R12 whisper small 档 E5 补充；R13 Web 结果页挂质量报告；R14 ARCHITECTURE.md 现代化 | report.stage_timings 落盘；冷启动分阶段实测数据；small 档 CER 表；/api/jobs/{id}/report 200；架构文档与新特性一致 | ✅ 6e01b23 |
 | 7 | LLM 选型对比（E6） | eval.py 支持 LLM 覆盖（base_url/model/结果键）；deepseek vs OpenRouter 免费档跑 c1/c2 T4；E6 表入档 | E6 表有 ≥2 模型 × 2 素材的溢出/重译收敛/匹配率数据；评测键不串模型 | ✅ feat 提交 |
-| 8 | 演示材料重制 | make_demo_video.py 反映新特性（BGM 闪避前后对比）；demo.gif 重制；README 特性列表与截刷新 | 对比视频含"有无 BGM"两版；README 无过时描述 | ⬜ |
+| 8 | 演示材料重制 | make_demo_video.py 反映新特性（BGM 闪避前后对比）；demo.gif 重制；README 特性列表与截刷新 | 对比视频含"有无 BGM"两版；README 无过时描述 | ✅ feat 提交 |
 | 9 | Web 健壮性收口 | 上传大小上限（413）；DELETE /api/jobs/{id}（任务删除）；前端历史删除按钮；API 测试 | 超限上传 413；删除后历史与详情 404；测试绿 | ⬜ |
 | 10 | 终版收尾 | 全量回归；评测矩阵终版一致性审视；INTERVIEW.md 增补 6-10 轮素材；迭代总结 | pytest 全绿；results.json 无口径混行；面试材料含量化新数字；本文件闭环 | ⬜ |
 
@@ -67,5 +67,48 @@
 - 附带修复两个真实适配器缺口：推理模型 reasoning 吃光 4096 token 正文为 null
   （提额 8192 + reasoning 兜底）；429 纳入 post_with_retry 退避（LLM 调用
   tries=4/backoff=6s）。
-- 74 测试绿。
+- 74 测试绿。提交：9586e21。
+
+---
+
+## 第 8 轮：演示材料重制
+
+### Plan（动手前记录）
+
+- `scripts/make_demo_video.py` 现状审查：demo 是否反映新特性（BGM 闪避、
+  音色自适应、HTML 报告）。
+- 改造：demo 补"BGM 保留 + 闪避"维度——用真实素材（有音乐的视频）对比
+  有/无闪避两版音轨的句间响度差，以字卡/波形呈现；重生成 compare 视频与
+  demo.gif。
+- README/特性清单通读核对：无过时描述。
+- 验收：脚本一键重生成 demo 产物；README 无过时；媒体不入库，脚本即验收依据。
+
+### 结果
+
+- ✅ 新增 `demo_bgm_ab.mp4`（Nike 8-14s：BGM OFF → BGM ON 同画面 A/B），
+  句间响度实测 OFF -91dB vs ON -27.7dB（**63dB 差值**，闪避效果可听）；
+  compare_ted_zh.mp4 与 demo.gif 按新脚本一键重生成。
+- README 通读无过时描述（Dify 仅出现在岗位方向与端点复用两处，均为有效信息）。
+- 媒体产物不入库（.gitignore），脚本即验收依据。
+
+## 第 9 轮：Web 健壮性收口
+
+### Plan（动手前记录）
+
+- 上传大小上限（默认 200MB，环境变量可调），超限返回 413；流式落盘改为
+  边收边计数、超限即断（防大文件吃满磁盘）。
+- `DELETE /api/jobs/{id}`：终态任务可删（DB 行 + 产物目录 + 上传文件），
+  running 任务拒绝 409；前端历史行加删除按钮。
+- API 测试：413 语义、删除后 GET 404、running 删除 409。
+- 验收：测试绿 + 真实服务 curl 验证。
+
+## 第 10 轮：终版收尾
+
+### Plan（动手前记录）
+
+- 全量 pytest 回归；评测矩阵 results.json 终审（无口径混行、键完整）。
+- INTERVIEW.md 增补第 6-10 轮素材：分阶段计时（冷启动 RT 0.24）、E6 LLM 选型
+  结论、推理模型适配、429 退避——更新 bullet 与追问预案。
+- ITERATIONS.md 第 8-10 轮结果回填 + 迭代总结（六轮累计量化收益表）。
+- 最终提交 + git status 干净核验。
 
