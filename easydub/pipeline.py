@@ -36,7 +36,9 @@ _progress_cb = None
 def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         translator_mode: str = "llm", voice=None, asr_provider: str = "",
         asr_model=None, burn_subs: bool = True, workdir=None,
-        lipsync_provider: str = "none", progress=None) -> Path:
+        lipsync_provider: str = "none", progress=None,
+        limit_translation: bool = True, allow_atempo: bool = True,
+        retry_overflow: bool = True, tts_rate: str = None) -> Path:
     global _progress_cb
     _progress_cb = progress
     t0 = time.time()
@@ -87,7 +89,8 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
             tr = EchoTranslator()
         elif settings.llm_api_key:
             tr = LLMTranslator(settings.llm_api_key, settings.llm_base_url,
-                               settings.llm_model, target_lang)
+                               settings.llm_model, target_lang,
+                               limit=limit_translation)
         else:
             _log("translate", "未配置 LLM_API_KEY，退化为 echo 模式（不翻译）")
             tr = EchoTranslator()
@@ -97,7 +100,7 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         _log("translate", f"完成，目标语言 {target_lang}（协议 {protocol}）")
 
     # 3. TTS 逐段合成 + 4. 时长对齐
-    tts = make_tts(tts_provider, target_lang, voice, settings)
+    tts = make_tts(tts_provider, target_lang, voice, settings, rate=tts_rate)
     tts_dir = out_dir / f"tts_{target_lang}"
     tts_dir.mkdir(exist_ok=True)
 
@@ -116,14 +119,16 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
             _synth(seg.translated, audio)
         seg.audio_path = str(audio)
         seg.audio_duration = probe_duration(audio)
-        plan = plan_alignment(seg.slot, seg.audio_duration)
+        plan = plan_alignment(seg.slot, seg.audio_duration,
+                              allow_atempo=allow_atempo)
         seg.tempo, seg.action = plan["tempo"], plan["action"]
 
     # 4.5 溢出重译：配音塞不进槽位的段，用更紧的字符预算重新翻译、重新配音。
     # 这是"双向夹逼"的闭环——首轮译文实测超时后，把实测约束反馈给生成端。
     n_overflow_before = sum(1 for s in segments if s.action == "overflow")
     overflows = find_overflow(segments)
-    if overflows and translator_mode == "llm" and settings.llm_api_key:
+    if (overflows and retry_overflow and translator_mode == "llm"
+            and settings.llm_api_key):
         tr = LLMTranslator(settings.llm_api_key, settings.llm_base_url,
                            settings.llm_model, target_lang)
         _log("retry", f"{len(overflows)} 段配音超时，按字符预算重译")
@@ -134,7 +139,8 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
             audio = _tts_path(p["index"], new_text)
             _synth(new_text, audio)  # 覆盖旧配音
             seg.audio_duration = probe_duration(audio)
-            plan = plan_alignment(seg.slot, seg.audio_duration)
+            plan = plan_alignment(seg.slot, seg.audio_duration,
+                                  allow_atempo=allow_atempo)
             seg.tempo, seg.action = plan["tempo"], plan["action"]
             _log("retry", f"段{p['index']}：预算 {p['budget']} 字符 → "
                           f"译文 {len(new_text)} 字符，配音 "
@@ -142,7 +148,9 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         # 重译结果写回翻译缓存，重跑不重复花钱
         save_segments(segments, tr_file)
     elif overflows:
-        _log("retry", f"{len(overflows)} 段配音超时；echo 模式无 LLM，跳过重译")
+        why = "重译已关闭（消融档）" if not retry_overflow \
+            else "echo 模式无 LLM"
+        _log("retry", f"{len(overflows)} 段配音超时；{why}，跳过重译")
     save_segments(segments, out_dir / f"segments_final.{target_lang}.json")
 
     # 5. 合成配音轨：变速段先生成，再全部放到静音底轨的原始时间戳上
@@ -231,7 +239,8 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         "target_lang": target_lang,
         "tts_provider": tts.name,
         "segments": [
-            {"i": i, "slot": round(s.slot, 2), "tts": round(s.audio_duration, 2),
+            {"i": i, "start": round(s.start, 3), "end": round(s.end, 3),
+             "slot": round(s.slot, 2), "tts": round(s.audio_duration, 2),
              "tempo": s.tempo, "action": s.action,
              "text": s.text, "translated": s.translated}
             for i, s in enumerate(segments)

@@ -14,13 +14,16 @@ MIN_TEMPO = 0.85
 
 
 def plan_alignment(slot: float, tts_duration: float,
-                   max_tempo: float = MAX_TEMPO) -> Dict:
+                   max_tempo: float = MAX_TEMPO,
+                   allow_atempo: bool = True) -> Dict:
     """给定槽位时长和外语音频时长，决定对齐动作。
 
     返回 {tempo, action, overrun}：
       fit      音频本就比槽位短，原速准时开始
       atempo   超时但可变速压回，无溢出
       overflow 变速到上限仍放不下，溢出 overrun 秒（记录到报告，供提示词重译）
+
+    allow_atempo=False 用于 E1 消融实验：关掉变速端，纯看生成端限长的效果。
     """
     if not tts_duration or tts_duration <= 0 or slot <= 0:
         return {"tempo": 1.0, "action": "empty", "overrun": 0.0}
@@ -28,6 +31,12 @@ def plan_alignment(slot: float, tts_duration: float,
     ratio = tts_duration / slot
     if ratio <= 1.0:
         return {"tempo": 1.0, "action": "fit", "overrun": 0.0}
+    if not allow_atempo:
+        return {
+            "tempo": 1.0,
+            "action": "overflow",
+            "overrun": round(tts_duration - slot, 2),
+        }
     if ratio <= max_tempo:
         return {"tempo": round(ratio, 4), "action": "atempo", "overrun": 0.0}
     return {

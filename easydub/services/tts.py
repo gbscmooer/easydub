@@ -27,14 +27,17 @@ VOICES: Dict[str, Dict[str, str]] = {
 class EdgeTTS:
     name = "edge"
 
-    def __init__(self, lang: str = "en", voice: Optional[str] = None):
+    def __init__(self, lang: str = "en", voice: Optional[str] = None,
+                 rate: Optional[str] = None):
         self.voice = voice or VOICES["edge"].get(lang, VOICES["edge"]["en"])
+        self.rate = rate  # 如 "-20%"，评测素材的慢语速用
 
     def synth(self, text: str, out_path) -> None:
         import edge_tts
 
         async def _save():
-            com = edge_tts.Communicate(text, self.voice)
+            kwargs = {"rate": self.rate} if self.rate else {}
+            com = edge_tts.Communicate(text, self.voice, **kwargs)
             await com.save(str(out_path))
 
         asyncio.run(_save())
@@ -108,9 +111,9 @@ class OpenRouterTTS:
 
 
 def make_tts(provider: str, lang: str = "en", voice: Optional[str] = None,
-             settings=None):
+             settings=None, rate: Optional[str] = None):
     if provider == "edge":
-        return EdgeTTS(lang, voice)
+        return EdgeTTS(lang, voice, rate=rate)
     if provider == "minimax":
         return MinimaxTTS(settings.minimax_api_key, settings.minimax_group_id,
                           lang, voice)

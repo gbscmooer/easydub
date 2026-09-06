@@ -14,7 +14,8 @@
 - **M2** lip-sync 打通：**改为全部在本机跑**（见 §1 环境结论），一条命令出 15s 口型样片
 - **M3** 产品面：FastAPI 三端点 + SQLite 任务表 + React 拖拽上传页，浏览器内出片
 
-M4（Agent/MCP）、M5（评测）、M6（包装）**不在本轮范围**，勿顺手做。
+M4（Agent/MCP）、M6（包装）本轮未做；**M5 评测体系已于 2026-09-06 补做完成**
+（make_eval_set + eval.py + eval_metrics + E1 消融数据，见 docs/EVALUATION.md）。
 
 ## 1. 环境结论（与 GOAL §4.4 的差异，以此为准）
 
@@ -97,3 +98,5 @@ cd /home/kokomilove/easydub && .venv/bin/python -m uvicorn server.app:app --port
 - **insightface 权重路径**：LatentSync 的 FaceAnalysis 用 `root=checkpoints/auxiliary`，buffalo_l 要放在 `checkpoints/auxiliary/models/buffalo_l/`（不是 `~/.insightface`）。
 - **LatentSync 硬约束**：视频每一帧都必须检出人脸（单帧无脸整段失败），所以流水线按"人脸段切块 + 单段失败回退原画面"设计；LatentSync 原生 25fps，接入前先 `normalize_fps` 出 master 档。
 - 服务器壳 `CMD_TEMPLATE` 用 `sys.executable`，别用裸 `python`（conda 环境的 shell 里没有）。
+- 评测跑批时每档用独立 workdir（`runs/<clip>_<tier>_<lang>`），否则翻译缓存会让消融档失效。
+- edge-tts 的 `rate` 参数不接受 None，必须条件传参；"-20%" 慢语速用于 c5 素材。

@@ -35,13 +35,16 @@ class EchoTranslator:
 
 
 class LLMTranslator:
-    def __init__(self, api_key: str, base_url: str, model: str, target_lang: str = "en"):
+    def __init__(self, api_key: str, base_url: str, model: str,
+                 target_lang: str = "en", limit: bool = True):
         if not api_key:
             raise ValueError("缺少 LLM_API_KEY")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.target_lang = target_lang
+        # limit=False 用于 E1 消融：提示词不带字符预算，纯自然翻译
+        self.limit = limit
         # base_url 含 "anthropic" 即走 Anthropic 协议（如 MiMo 代理）
         self.protocol = "anthropic" if "anthropic" in base_url.lower() else "openai"
 
@@ -96,8 +99,12 @@ class LLMTranslator:
         lang = LANG_NAME.get(self.target_lang, self.target_lang)
         lines = [f"把以下字幕翻译成{lang}。"]
         for i, seg in enumerate(segments):
-            budget = max(8, int(seg.slot * cps))
-            lines.append(f'段{i}（时长{seg.slot:.1f}秒，译文不超过{budget}字符）: {seg.text}')
+            if self.limit:
+                budget = max(8, int(seg.slot * cps))
+                lines.append(
+                    f'段{i}（时长{seg.slot:.1f}秒，译文不超过{budget}字符）: {seg.text}')
+            else:
+                lines.append(f"段{i}: {seg.text}")
         return "\n".join(lines)
 
     @staticmethod

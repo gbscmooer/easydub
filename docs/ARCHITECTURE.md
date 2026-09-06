@@ -10,11 +10,11 @@
    ▼
 ┌─────────┐   ┌──────────┐   ┌─────────┐   ┌──────────┐   ┌─────────┐
 │  ASR    │ → │  翻译     │ → │  TTS    │ → │ 时长对齐  │ → │  合成    │
-│ whisper │   │ LLM 限长 │   │ edge/   │   │ atempo   │   │ ffmpeg  │
-│ 时间轴  │   │ 提示词   │   │ minimax │   │ 双向夹逼 │   │ 字幕+音轨│
+│ 云端/   │   │ LLM 限长 │   │ edge/   │   │ atempo   │   │ ffmpeg  │
+│ whisper │   │ 提示词   │   │ minimax │   │ 双向夹逼 │   │ 字幕+音轨│
 └─────────┘   └──────────┘   └─────────┘   └──────────┘   └────┬────┘
                                                                ▼
-                                                    (D8) lip-sync 口型对齐
+                                        人脸分段 → lip-sync(LatentSync) → 拼回
                                                                ▼
                                                         输出外语版视频
 ```
@@ -57,6 +57,10 @@ ASR 产出它，翻译只补 `translated`，TTS 只补音频字段，对齐只�
 限幅 1.25 的原因：再快听感明显发急。溢出段全部记录在 `report.json`，
 这是优化提示词的数据依据，也是面试里"你怎么量化音画同步质量"的答案。
 
+实测补充（Nike/TED 实验）：**云 TTS 固定带 0.2s 头静音 + 最长近 1s 尾静音**，
+1 个字的配音实测 1.51s、语音只占 0.33s——不修剪的话短句对齐全毁。
+TTS 后统一过 `trim_silence`（保留 0.05s 头/0.10s 尾垫），溢出率 8/13 → 1/13。
+
 ### 3. 适配器模式隔离所有外部依赖
 
 TTS（edge/minimax）、LLM（OpenAI/Anthropic 双协议自动识别）、ASR（模型规格可调）、
@@ -66,15 +70,24 @@ lip-sync（sync.so/LatentSync）全部是"协议接口 + provider"。
 ### 4. ffmpeg 是媒体操作唯一出口
 
 所有音视频操作集中在 `media.py`：音轨合成用 `adelay` 定位 + `amix(normalize=0)`
-叠加到静音底轨，保证每段配音精确落在原时间戳上。字幕优先烧录（需 libass），
-ffmpeg 构建不带 libass 时自动降级为 mov_text 软字幕轨（播放器可开关、
-视频流免重编码）——实测本机 ffmpeg 8.1 无 libass，走软字幕轨。
+叠加到静音底轨，保证每段配音精确落在原时间戳上。字幕双层输出：有 libass 时
+烧录（任何播放器可见）**同时**封 mov_text 软字幕轨（可开关、可换语言元数据）；
+无 libass 自动降级为仅软字幕轨。音轨统一 AAC 48kHz。
+`subtitles` 滤镜参数有专门的转义函数（filtergraph 单引号层 + 选项 `\:` 层），
+文件名里的逗号/空格/括号不会炸滤镜图。
 
-### 5. 口型对齐的接入策略（D8）
+### 5. 口型对齐：人脸分段 + 分段推理 + 失败回退（已实现）
 
-- 只对**人脸出镜段**做 lip-sync（人脸检测跳过空镜/产品镜头）——省算力也省钱；
-- `lipsync.py` 先定死接口：`apply(视频段, 音频) -> 视频段`，
-  sync.so（API，主）与 LatentSync（开源+租卡，备）两条腿，谁先跑通用谁。
+- **人脸分段**（`services/facedetect.py`）：Haar 级联抽样判帧（0.5s 步进），
+  无人脸间隔 <1s 并入同段、<1s 碎段丢弃——纯 OpenCV，无需 GPU/新模型；
+- **分段推理**：先统一 25fps 出 master 档（LatentSync 原生 25fps），
+  人脸段切子视频 + 从 dub_track 切对应音频 → 逐段提交 LatentSync 服务
+  （HTTP 契约：提交/轮询/下载）→ concat 拼回时间轴；
+- **两条容错**：本地 LatentSync 打了"单帧检不到脸沿用上一帧人脸框"补丁
+  （TED 切出镜头/低头帧不可避免）；流水线侧单段失败回退原画面不阻断全片；
+- **音轨始终用自产 dub_track**：只取口型结果的画面，不吃它的音轨（避免二压）；
+- 服务壳 `server/lipsync_server.py` 环境变量化（LATENTSYNC_DIR/CMD），
+  本机 WSL 5090 与 Windows 机通用。
 
 ## Dify 编排映射（Week 2）
 
@@ -82,10 +95,10 @@ Dify 不做重媒体处理，只做**可视化编排 + 提示词调参界面**�
 
 | Dify 节点 | 对应本项目的 |
 |-----------|--------------|
-| 开始节点（视频输入） | CLI 的 video 参数 |
-| HTTP 节点 ×1 | `POST /api/asr`（包 `transcribe`） |
+| 开始节点（视频输入） | Web 端 video 参数 |
+| HTTP 节点 ×1 | `POST /api/jobs`（提交任务） |
 | LLM 节点 | 翻译提示词搬进 Dify，可视化迭代 |
-| HTTP 节点 ×2 | `POST /api/tts-align`、`POST /api/render` |
+| HTTP 节点 ×2 | `GET /api/jobs/{id}`（进度）、`GET /api/jobs/{id}/result`（成品） |
 | 结束节点 | 返回成品视频 URL |
 
 即：FastAPI 把三个阶段包成端点，Dify 负责串。面试时能讲清
@@ -96,18 +109,27 @@ Dify 不做重媒体处理，只做**可视化编排 + 提示词调参界面**�
 ```
 easydub/
 ├── easydub/
-│   ├── pipeline.py        # 编排
+│   ├── pipeline.py        # 编排（含消融开关 limit/atempo/retry）
 │   ├── config.py          # 配置（.env）
 │   ├── models.py          # Segment 契约
 │   ├── align.py           # 时长对齐纯算法
-│   ├── media.py           # ffmpeg 唯一出口
+│   ├── media.py           # ffmpeg 唯一出口（切/拼/变速/字幕/封装）
+│   ├── eval_metrics.py    # 评测指标纯函数（CER/偏移/成本）
 │   ├── __main__.py        # CLI
 │   └── services/
-│       ├── asr.py         # faster-whisper + 碎段合并
-│       ├── translator.py  # LLM 双协议 + 限长提示词
-│       ├── tts.py         # edge / minimax
-│       └── lipsync.py     # D8 接入点（接口已定）
-├── scripts/make_sample.py # 生成示例素材
-├── tests/                 # 纯逻辑单测（无网络依赖）
-└── docs/                  # 本文档 + ROADMAP
+│       ├── asr.py         # 云端转录 + faster-whisper + 字级断句
+│       ├── translator.py  # LLM 双协议 + 限长提示词 + 退避重试
+│       ├── tts.py         # edge / minimax / openrouter + 静音修剪
+│       ├── facedetect.py  # Haar 人脸分段
+│       ├── http.py        # 退避重试
+│       └── lipsync.py     # LatentSync 客户端 / sync.so 预留
+├── server/
+│   ├── app.py             # Web 三端点 + SQLite 任务表
+│   └── lipsync_server.py  # LatentSync 服务壳（可环境变量配置）
+├── web/                   # React 拖拽上传页（Vite，构建产物由 FastAPI 托管）
+├── scripts/
+│   ├── make_sample.py     # 示例素材
+│   ├── make_eval_set.py   # 5 条评测素材（带标准文稿）
+│   └── eval.py            # E1 消融编排 + 指标表
+└── tests/                 # 纯逻辑单测 + API 打桩测试（35 例）
 ```
