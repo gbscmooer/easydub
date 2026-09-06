@@ -131,8 +131,11 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
     """返回 {"tts": 名称, "overflow_before_retry": 首轮溢出数,
     "retry_rounds": 轮数, "measured_cps": 实测语速}"""
     tts = make_tts(tts_provider, target_lang, voice, settings, rate=tts_rate)
-    # 缓存键含供应商：切 TTS 供应商不会错拿旧音频
-    tts_dir = out_dir / f"tts_{tts_provider}_{target_lang}"
+    # 缓存键含供应商与音色：切供应商/音色都不会错拿旧音频
+    tag = "".join(c for c in (voice or getattr(tts, "voice", "") or "")
+                  if c.isalnum() or c == "-")
+    tts_dir = out_dir / (f"tts_{tts_provider}_{target_lang}"
+                         + (f"_{tag}" if tag else ""))
     tts_dir.mkdir(exist_ok=True)
 
     def _synth(text, path):
@@ -245,7 +248,8 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
 
     save_segments(segments, out_dir / f"segments_final.{target_lang}.json")
     return {"tts": tts.name, "overflow_before_retry": n_overflow_before,
-            "retry_rounds": rounds, "measured_cps": cps}
+            "retry_rounds": rounds, "measured_cps": cps,
+            "voice": getattr(tts, "voice", None)}
 
 
 # ---------------- 阶段 5：配音轨合成 ----------------
@@ -373,6 +377,7 @@ def stage_render(video_for_mux: Path, track: Path, segments: list,
         "tts_provider": tts_name,
         "retry_rounds": stats.get("retry_rounds", 0),
         "measured_cps": stats.get("measured_cps"),
+        "voice": stats.get("voice"),
         "keep_bgm": bgm_kept,
         "segments": [
             {"i": i, "start": round(s.start, 3), "end": round(s.end, 3),
@@ -404,6 +409,7 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         limit_translation: bool = True, allow_atempo: bool = True,
         retry_overflow: bool = True, tts_rate: str = None,
         keep_bgm: bool = True, asr_onset_shift: float = None,
+        auto_voice: bool = True,
         subtitle_style: str = SUBTITLE_STYLE) -> Path:
     global _progress_cb
     _progress_cb = progress
@@ -426,6 +432,14 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
     if not segments:
         # 规格要求无声视频"正常完成（零段落）"：跳过翻译/配音，出静音成品
         _log("asr", "未识别到语音，按零段落处理：输出静音成品")
+
+    # 音色自适应：未显式指定音色时按说话人基频选男女声（edge 音色带性别）
+    if voice is None and auto_voice and tts_provider == "edge" and segments:
+        from .services.voice_match import auto_pick_voice
+        picked, f0 = auto_pick_voice(video, segments, out_dir, target_lang)
+        if picked:
+            voice = picked
+            _log("voice", f"说话人基频 ≈{f0:.0f}Hz → 自动选音色 {picked}")
 
     segments = stage_translate(segments, target_lang, out_dir, settings,
                                translator_mode=translator_mode,

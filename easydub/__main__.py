@@ -28,6 +28,8 @@ def main(argv=None) -> int:
     t.add_argument("--asr-model", default=None, help="local: tiny/base/small")
     t.add_argument("--onset-shift", type=float, default=None,
                    help="ASR 起点前移补偿秒数（缺省：云 ASR 0.12 / 本地 0）")
+    t.add_argument("--no-auto-voice", action="store_true",
+                   help="关闭音色自适应（默认按说话人基频自动选男女声）")
     t.add_argument("--lipsync", default="none",
                    choices=["none", "syncso", "latentsync"])
     t.add_argument("--no-subs", action="store_true", help="不烧录字幕")
@@ -61,7 +63,8 @@ def main(argv=None) -> int:
                   voice=args.voice, asr_provider=args.asr_provider,
                   asr_model=args.asr_model,
                   burn_subs=not args.no_subs, lipsync_provider=args.lipsync,
-                  keep_bgm=not args.no_bgm, asr_onset_shift=args.onset_shift)
+                  keep_bgm=not args.no_bgm, asr_onset_shift=args.onset_shift,
+                  auto_voice=not args.no_auto_voice)
         print(f"\n成品: {out}")
         return 0
 
