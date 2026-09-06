@@ -113,3 +113,19 @@ def auto_pick_voice(video, segments, out_dir, lang: str = "en",
             f0s.append(f0)
     f0 = statistics.median(f0s) if f0s else None
     return pick_voice(provider, lang, f0), f0
+
+
+def extract_speaker_reference(video, segments, out_dir):
+    """为音色克隆选参考：取最长 ASR 段的原声（5~15s 最理想），
+    参考文本直接复用 ASR 转写——零人工。返回 (wav_path, transcript)。"""
+    from ..media import extract_audio_slice
+
+    if not segments:
+        return None, ""
+    best = max(segments, key=lambda s: s.slot)
+    if best.slot < 2.0:
+        return None, ""
+    ref_path = Path(out_dir) / "ref_speaker.wav"
+    ref_path.parent.mkdir(parents=True, exist_ok=True)
+    extract_audio_slice(video, max(0.0, best.start), best.end, ref_path)
+    return ref_path, best.text or ""

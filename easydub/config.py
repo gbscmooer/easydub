@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     syncso_api_key: str = ""
     # 自建 LatentSync 服务地址（跑在 GPU 服务器上，部署见 server/README_WINDOWS.md）
     lipsync_server_url: str = "http://127.0.0.1:8001"
+    # CosyVoice2 克隆语音服务（server/cosyvoice_server.py，本机 GPU）
+    cosyvoice_url: str = "http://127.0.0.1:8002"
 
     # OpenRouter 网关（云端 ASR 转录 / TTS / LLM 翻译，OpenAI 兼容协议）
     openrouter_api_key: str = ""

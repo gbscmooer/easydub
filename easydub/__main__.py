@@ -32,6 +32,11 @@ def main(argv=None) -> int:
                    help="关闭音色自适应（默认按说话人基频自动选男女声）")
     t.add_argument("--subtitle-style", default=None,
                    help="ASS force_style 样式串（如 FontSize=24,Outline=2）")
+    t.add_argument("--voice-clone", action="store_true",
+                   help="音色克隆模式：原说话人参考 → 跨语种克隆合成，"
+                        "输出纯模仿人声（需 cosyvoice 服务 :8002，不叠加 BGM）")
+    t.add_argument("--instruct", default="",
+                   help="克隆模式的语气指令（如 '用激动的语气说这句话'）")
     t.add_argument("--lipsync", default="none",
                    choices=["none", "syncso", "latentsync"])
     t.add_argument("--no-subs", action="store_true", help="不烧录字幕")
@@ -69,6 +74,7 @@ def main(argv=None) -> int:
                   burn_subs=not args.no_subs, lipsync_provider=args.lipsync,
                   keep_bgm=not args.no_bgm, asr_onset_shift=args.onset_shift,
                   auto_voice=not args.no_auto_voice,
+                  voice_clone=args.voice_clone, clone_instruct=args.instruct,
                   **({"subtitle_style": args.subtitle_style}
                      if args.subtitle_style else {}))
         print(f"\n成品: {out}")

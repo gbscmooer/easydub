@@ -1,13 +1,17 @@
-"""TTS 服务：统一接口，三个实现。
+"""TTS 服务：统一接口，四个实现。
 
 - EdgeTTS      免费、无需 key（微软神经语音，广告质感够用）
 - MinimaxTTS   JD 指定的 minimax，需 key
 - OpenRouterTTS OpenRouter 网关的 TTS 模型（fish-audio 等），免费档可用
+- CosyVoiceCloneTTS 零样本音色克隆（原说话人参考 → 跨语种合成），本机 GPU 服务
 """
 import asyncio
+import base64
 from typing import Dict, Optional
 
 import httpx
+
+from .http import post_with_retry
 
 # 各 provider 的默认音色（可被 --voice 覆盖）
 VOICES: Dict[str, Dict[str, str]] = {
@@ -110,8 +114,46 @@ class OpenRouterTTS:
             f.write(resp.content)
 
 
+class CosyVoiceCloneTTS:
+    """零样本音色克隆 TTS（方向转型的核心）：原说话人参考音频 →
+    目标语言语音，音色/语气贴原片。服务端模型常驻（server/cosyvoice_server.py），
+    参考音频在 run() 里自动从原视频提取（voice_match 选段 + ASR 转写零人工）。
+    """
+
+    name = "cosyvoice"
+
+    def __init__(self, base_url: str = "http://127.0.0.1:8002",
+                 ref_wav=None, ref_text: str = "", instruct: str = "",
+                 speed: float = 1.0):
+        if ref_wav is None:
+            raise ValueError("克隆模式需要参考音频（原说话人段）")
+        import hashlib
+        self.base_url = base_url.rstrip("/")
+        ref_bytes = open(ref_wav, "rb").read()
+        # 音色指纹进缓存标签：换参考音频（换说话人/换视频）不错拿旧配音
+        self.voice = "clone-" + hashlib.md5(
+            ref_bytes + ref_text.encode()).hexdigest()[:6]
+        self.ref_wav_b64 = base64.b64encode(ref_bytes).decode()
+        self.ref_text = ref_text
+        self.instruct = instruct
+        self.speed = speed
+
+    def synth(self, text: str, out_path) -> None:
+        payload = {"text": text, "ref_wav_b64": self.ref_wav_b64,
+                   "ref_text": self.ref_text, "instruct": self.instruct,
+                   "speed": self.speed}
+        resp = post_with_retry(
+            lambda: httpx.post(f"{self.base_url}/clone", json=payload,
+                               timeout=300),
+            tries=3, backoff=4.0)
+        resp.raise_for_status()
+        data = resp.json()
+        with open(str(out_path), "wb") as f:
+            f.write(base64.b64decode(data["wav_b64"]))
+
+
 def make_tts(provider: str, lang: str = "en", voice: Optional[str] = None,
-             settings=None, rate: Optional[str] = None):
+             settings=None, rate: Optional[str] = None, **kw):
     if provider == "edge":
         return EdgeTTS(lang, voice, rate=rate)
     if provider == "minimax":
@@ -121,4 +163,10 @@ def make_tts(provider: str, lang: str = "en", voice: Optional[str] = None,
         return OpenRouterTTS(settings.openrouter_api_key, lang, voice,
                              settings.openrouter_tts_model,
                              settings.openrouter_base_url)
+    if provider == "cosyvoice":
+        return CosyVoiceCloneTTS(
+            base_url=getattr(settings, "cosyvoice_url", None)
+            or "http://127.0.0.1:8002",
+            ref_wav=kw.get("ref_wav"), ref_text=kw.get("ref_text", ""),
+            instruct=kw.get("instruct", ""), speed=kw.get("speed", 1.0))
     raise ValueError(f"未知 TTS provider: {provider}")

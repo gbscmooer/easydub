@@ -192,3 +192,57 @@
      `steps.<id>.outcome == 'failure'`。
 - 修复：显式 `apt-get install ffmpeg` + `which` 检查 + pipefail + 日志落
   artifact + 失败详情转公开注解。**CI 最终 success**（fc8f1c7）。
+
+---
+
+## 第 12 轮：方向转型——克隆语音配音（用户指定）
+
+### 方向变更（用户原话的工程转译）
+
+> "效果不行……方向应该变为：根据原视频只输出**克隆语音+克隆语气+lip-sync
+> 同步发音+模仿翻译**。最终目的就是输出相当于异种语言的**同音、同语气、同节奏**
+> 合成音频（不需要处理 BGM 等背景），结果**不叠加 BGM，只输出模仿语音**，只
+> 专注于这个。"
+
+翻译成工程目标：**换掉"通用音色 TTS"这个短板**——用原说话人的参考音频做
+零样本克隆（cross-lingual：英文参考 → 中文合成），音色/语气/节奏贴原片；
+流水线其余能力（ASR 断句、限长翻译、时长对齐、口型）全部复用；BGM 闪避
+降级为默认关闭，成品音轨=纯模仿人声。
+
+### Plan（动手前记录）
+
+- **T1 选型**：本机 5090 的开源零样本克隆 TTS。候选 CosyVoice2-0.5B
+  （cross-lingual + instruct 语气控制 + 社区成熟）、F5-TTS、IndexTTS2。
+  决策依据：跨语种克隆质量、安装成本（clone latentsync 环境复用 torch 2.10
+  cu128，避免大下载）、速度参数（粗对齐）。预装权重走 modelscope/hf-mirror。
+- **T2 参考音频自动化**：从原视频自动选"最干净的说话人段"做 reference
+  （voice_match 的选段逻辑复用）+ 参考文本直接用 ASR 结果（零人工）。
+- **T3 接入流水线**：`tts.py` 新增克隆 provider（synth 带 reference/instruct
+  参数）；`run()` 加 voice_clone 开关；keep_bgm 默认改 False（输出纯模仿人声轨）。
+- **T4 语气**：翻译提示词加"保留原说话人语气/风格"；合成时 instruct 模式
+  可控语气。
+- **T5 节奏对齐**：克隆合成后仍走现有 slot 对齐（speed 粗调 + atempo 精调 +
+  溢出重译），验证指标不退化。
+- **验收**：标准片段 ted_std10 一条命令出"Amanda 的声音说中文"的成品；
+  时长对齐指标（溢出率/偏移）不退化；音色相似度人耳可辨（用户听）；全程
+  无 BGM 叠加。
+
+### 结果
+
+- ✅ **T1 选型落地**：CosyVoice2-0.5B（跨语种零样本克隆 + instruct 语气 + speed）。
+  环境 = clone latentsync（torch 2.10 cu128 复用）；踩坑五连：whisper 构建缺
+  setuptools、pip 事务回滚、torch 被连带降级 2.3.1（sm_120 无法运行，从
+  latentsync 目录级复制恢复）、onnxruntime 1.18 不兼容 numpy2（升 1.20.1）、
+  torchaudio 2.10 load/save 迁到 torchcodec（soundfile 全局补丁 + 张量直通）。
+  权重走 modelscope（5.3G）。
+- ✅ **T2 参考自动化**：最长 ASR 段原声 8.64s + 其转写做参考（零人工）。
+- ✅ **T3 接入**：`tts.py` 新增 CosyVoiceCloneTTS（音色指纹进缓存标签）、
+  `server/cosyvoice_server.py` 常驻服务 :8002、`run(--voice-clone)` 一条命令；
+  克隆模式强制不叠加 BGM。
+- ✅ **T4 语气**：翻译提示词加"保留原句语气与节奏感"；服务端 instruct2
+  模式支持语气指令（--instruct）。
+- ✅ **T5 端到端验收**：标准片段 23.4s 出"Amanda 克隆音色说中文"成品，
+  口型 2 段全部拼回；首轮溢出 1 段由重译闭环收敛（实测语速 3.58 cps 被校准
+  反馈捕获），最终 fit 2 / 溢出 0——时长对齐指标无退化。
+- 遗留（如实）：音色相似度需人耳终评；克隆语速 3.58cps 慢于 edge，短槽位
+  重译更频繁（闭环已兜住）；instruct 语气控制效果未做 A/B。

@@ -143,10 +143,17 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
                     video_total: float = None,
                     max_workers: int = IO_WORKERS,
                     llm_base_url: str = None,
-                    llm_model: str = None) -> dict:
+                    llm_model: str = None,
+                    clone_ref_wav=None, clone_ref_text: str = "",
+                    clone_instruct: str = "", clone_speed: float = 1.0) -> dict:
     """返回 {"tts": 名称, "overflow_before_retry": 首轮溢出数,
     "retry_rounds": 轮数, "measured_cps": 实测语速}"""
-    tts = make_tts(tts_provider, target_lang, voice, settings, rate=tts_rate)
+    tts_kwargs = {}
+    if tts_provider == "cosyvoice":
+        tts_kwargs = dict(ref_wav=clone_ref_wav, ref_text=clone_ref_text,
+                          instruct=clone_instruct, speed=clone_speed)
+    tts = make_tts(tts_provider, target_lang, voice, settings, rate=tts_rate,
+                   **tts_kwargs)
     # 缓存键含供应商与音色：切供应商/音色都不会错拿旧音频
     tag = "".join(c for c in (voice or getattr(tts, "voice", "") or "")
                   if c.isalnum() or c == "-")
@@ -436,6 +443,8 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         keep_bgm: bool = True, asr_onset_shift: float = None,
         auto_voice: bool = True, llm_base_url: str = None,
         llm_model: str = None,
+        voice_clone: bool = False, clone_instruct: str = "",
+        clone_speed: float = 1.0,
         subtitle_style: str = SUBTITLE_STYLE) -> Path:
     global _progress_cb
     _progress_cb = progress
@@ -476,6 +485,23 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
             voice = picked
             _log("voice", f"说话人基频 ≈{f0:.0f}Hz → 自动选音色 {picked}")
 
+    # 音色克隆模式（方向转型核心）：原说话人参考 → 跨语种克隆合成，
+    # 不叠加 BGM（用户指定：只输出模仿语音，专注克隆本身）
+    clone_ref_wav, clone_ref_text = None, ""
+    if voice_clone and segments:
+        from .services.voice_match import extract_speaker_reference
+        clone_ref_wav, clone_ref_text = extract_speaker_reference(
+            video, segments, out_dir)
+        if clone_ref_wav is None:
+            _log("voice", "没有可用参考段（段太短），退回普通 TTS")
+            voice_clone = False
+        else:
+            tts_provider = "cosyvoice"
+            voice = None
+            keep_bgm = False
+            _log("voice", f"克隆参考: {clone_ref_wav.name}（最长段原声+ASR 转写）,"
+                          f"输出纯模仿人声（不叠加 BGM）")
+
     segments = timed("translate", stage_translate, segments, target_lang,
                      out_dir, settings, translator_mode=translator_mode,
                      limit_translation=limit_translation, glossary=glossary,
@@ -488,7 +514,10 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
                       retry_overflow=retry_overflow,
                       tts_rate=tts_rate, glossary=glossary,
                       video_total=probe_duration(video),
-                      llm_base_url=llm_base_url, llm_model=llm_model)
+                      llm_base_url=llm_base_url, llm_model=llm_model,
+                      clone_ref_wav=clone_ref_wav,
+                      clone_ref_text=clone_ref_text,
+                      clone_instruct=clone_instruct, clone_speed=clone_speed)
     tts_stats["stage_timings"] = timings
     tts_stats["llm_model"] = llm_model or settings.llm_model
     tracks = timed("mix", stage_mix, segments, target_lang, video, out_dir,
