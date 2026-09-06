@@ -110,7 +110,8 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
                     glossary: dict = None, max_retry_rounds: int = 2) -> dict:
     """返回 {"tts": 名称, "overflow_before_retry": 首轮溢出数, "retry_rounds": 轮数}"""
     tts = make_tts(tts_provider, target_lang, voice, settings, rate=tts_rate)
-    tts_dir = out_dir / f"tts_{target_lang}"
+    # 缓存键含供应商：切 TTS 供应商不会错拿旧音频
+    tts_dir = out_dir / f"tts_{tts_provider}_{target_lang}"
     tts_dir.mkdir(exist_ok=True)
 
     def _synth(text, path):

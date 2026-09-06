@@ -33,17 +33,20 @@ TIERS = {
 }
 
 
-def one_run(video: Path, lang: str, tier: str, workroot: Path) -> dict:
+def one_run(video: Path, lang: str, tier: str, workroot: Path,
+            tts_provider: str = "edge") -> dict:
     meta = json.loads((video.parent / "meta.json").read_text(encoding="utf-8"))
     info = next(m for m in meta if m["name"] == video.stem)
     video_seconds = probe_duration(video)
 
     t0 = time.time()
-    out = run(video, lang, workdir=str(workroot / f"{video.stem}_{tier}_{lang}"),
-              **TIERS[tier])
+    suffix = f"{video.stem}_{tier}_{lang}" + (
+        f"_{tts_provider}" if tts_provider != "edge" else "")
+    out = run(video, lang, workdir=str(workroot / suffix),
+              tts_provider=tts_provider, **TIERS[tier])
     wall = time.time() - t0
 
-    rdir = workroot / f"{video.stem}_{tier}_{lang}" / video.stem
+    rdir = workroot / suffix / video.stem
     report = json.loads((rdir / f"report.{lang}.json").read_text(encoding="utf-8"))
     asr_text = "".join(s["text"] for s in json.loads(
         (rdir / "segments.json").read_text(encoding="utf-8")))
@@ -70,6 +73,8 @@ def main() -> None:
     ap.add_argument("--langs", default="en")
     ap.add_argument("--tiers", default=",".join(TIERS),
                     help="缺省跑全部消融档；只要基线用 T4_full")
+    ap.add_argument("--tts", default="edge", choices=["edge", "openrouter"],
+                    help="E2 TTS 选型对比用")
     args = ap.parse_args()
 
     set_dir = Path(args.set)
@@ -87,7 +92,8 @@ def main() -> None:
         for lang in langs:
             for tier in tiers:
                 results.append(one_run(video, lang, tier,
-                                       ROOT / "artifacts" / "eval" / "runs"))
+                                       ROOT / "artifacts" / "eval" / "runs",
+                                       tts_provider=args.tts))
 
     out = ROOT / "artifacts" / "eval" / "results.json"
     out.parent.mkdir(parents=True, exist_ok=True)

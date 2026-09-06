@@ -56,3 +56,16 @@ class TestCost:
         c = cost_estimate(10, 1, 10, "edge", lipsync_seconds=5)
         assert abs(c["total"] - (c["asr"] + c["llm"] + c["tts"]
                                  + c["lipsync"])) < 1e-9
+
+
+class TestNormalize:
+    def test_cn_digits(self):
+        from easydub.eval_metrics import normalize_zh
+        assert normalize_zh("两件八折") == "2件8折"
+
+    def test_punct_stripped(self):
+        from easydub.eval_metrics import normalize_zh
+        assert normalize_zh("你好，世界！") == "你好世界"
+
+    def test_cer_after_normalize(self):
+        assert cer("全场两件八折", "全场2件8折") == 0.0

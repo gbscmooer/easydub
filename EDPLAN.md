@@ -14,8 +14,10 @@
 - **M2** lip-sync 打通：**改为全部在本机跑**（见 §1 环境结论），一条命令出 15s 口型样片
 - **M3** 产品面：FastAPI 三端点 + SQLite 任务表 + React 拖拽上传页，浏览器内出片
 
-M4（Agent/MCP）、M6（包装）本轮未做；**M5 评测体系已于 2026-09-06 补做完成**
-（make_eval_set + eval.py + eval_metrics + E1 消融数据，见 docs/EVALUATION.md）。
+**M5 评测体系与 M4 Agent/MCP 已于 2026-09-06 完成**（E1/E2/E4 数据、CER 归一化、
+MCP 三工具、Agent 决策闭环 + 验收日志，见 docs/EVALUATION.md 与 docs/INTERVIEW.md）；
+**D10/D11/D12 打磨与包装同日完成**。仅剩 D8（Dify 编排，需内网穿透，按用户指示跳过）
+与 M6 尾项（新机器 30 分钟复现实测、3 人网页可用性实测，需真人到场）。
 
 ## 1. 环境结论（与 GOAL §4.4 的差异，以此为准）
 

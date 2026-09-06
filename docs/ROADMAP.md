@@ -71,19 +71,22 @@
 - [ ] 口型偏移人工评分（E3，待 5090 空档批量跑）
 - [ ] CER 数字/标点归一化后再评（现 0.09~0.26，主因是"八折→8折"形式差异）
 
-### D10 打磨：从 demo 到成品
-- [ ] 字幕样式（位置/描边/双语排版）、错误处理（无声视频/API 失败重试）、多语言抽查（ja/es 各一条）
-- 验收：挑不出一眼假
+### D10 打磨 ✅ 完成（2026-09-06）
+- [x] 字幕样式 force_style（FontSize/Outline/Shadow/MarginV，可覆盖）
+- [x] 错误处理：无声视频零段落出片、API 退避重试、断点续跑 kill 实测通过
+- [x] 多语言抽查 ja/es（见 E4）
+- 验收：成片抽帧人检通过（双语字幕/口型段/音轨电平）
 
-### D11 包装
-- [ ] README：架构图 + demo GIF + Dify 截图 + 一键复现
-- [ ] 1–2 分钟对比视频；GitHub Actions 跑 pytest
-- [ ] commit 历史按主题整理
+### D11 包装 ✅ 完成（2026-09-06，除 Dify 截图外）
+- [x] README：流水线图 + 快速开始/Web/口型/评测四板块（Dify 截图随 D8 另补）
+- [x] 对比视频 artifacts/demo/compare_ted_zh.mp4 + demo.gif（scripts/make_demo_video.py 可再生）
+- [x] GitHub Actions：.github/workflows/test.yml（pytest）
+- [x] commit 历史按主题整理（12+ 条）
 
-### D12 面试材料
-- [ ] 简历 3–4 条 bullet（公式：动词 + 方案 + 量化结果）
-- [ ] 追问预案：时长对齐 / 云端 ASR 断句 / max_tokens 隐性契约 / lip-sync 选型 / Dify 边界
-- [ ] `/project-guide` 生成导学+面经，`/great-resume` 酥化简历
+### D12 面试材料 ✅ 完成（2026-09-06）
+- [x] docs/INTERVIEW.md：4 条简历 bullet（动词+方案+量化数字）+ 7 个追问预案
+- [x] 数据底座：docs/EVALUATION.md（E1/E2/E4 + 成本）
+- [ ] `/project-guide`、`/great-resume` 按需另行生成（外部技能）
 
 ### D13–14 缓冲
 欠账、补测、模拟面试。

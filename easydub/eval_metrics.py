@@ -5,10 +5,29 @@ E1 消融、E4 多语言、成本核算的数字全部出自这里，论文/简�
 from typing import Dict, List, Optional
 
 
+_CN_DIGITS = {"零": "0", "一": "1", "二": "2", "两": "2", "三": "3", "四": "4",
+              "五": "5", "六": "6", "七": "7", "八": "8", "九": "9", "十": "10"}
+_PUNCT = "，。！？；：、！？.,!?;:\"'()（）[]【】—-…·"
+
+
+def normalize_zh(text: str) -> str:
+    """CER 前的归一化：中文数字→阿拉伯数字、去标点、去空白。
+
+    ASR 输出与文稿的"信息性差异"只剩真正的识别错字；
+    "两件八折"vs"2件8折"这类形式差异不再污染 CER。
+    """
+    out = []
+    for ch in text:
+        if ch in _PUNCT or ch.isspace():
+            continue
+        out.append(_CN_DIGITS.get(ch, ch))
+    return "".join(out)
+
+
 def cer(expected: str, recognized: str) -> float:
-    """字符错误率：Levenshtein 距离 / 期望字符数（忽略空白）。"""
-    a = [c for c in expected if not c.isspace()]
-    b = [c for c in recognized if not c.isspace()]
+    """字符错误率：Levenshtein 距离 / 期望字符数（忽略空白与形式差异）。"""
+    a = list(normalize_zh(expected))
+    b = list(normalize_zh(recognized))
     if not a:
         return 0.0 if not b else 1.0
     prev = list(range(len(b) + 1))
