@@ -15,3 +15,27 @@ web/dist/
 *.wav
 *.png
 *.jpg
+
+# 运行产物 / 本地状态（Push 前补全）
+*.db
+*.sqlite
+*.log
+tmp/
+temp/
+
+# 更多媒体格式（音视频产物一律不入库）
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.gif
+*.jpeg
+*.webm
+*.mkv
+*.avi
+*.onnx
+
+# IDE / 系统文件
+.idea/
+.vscode/
+Thumbs.db
