@@ -138,6 +138,26 @@ CER 计算前做数字/标点归一化（`normalize_zh`："两件八折"≡"2件
 （本机 5090 跑 whisper base；云端墙钟为缓存重放，冷启动另计）。
 eval.py 用法：`--asr local --asr-model base`。
 
+## E6 LLM 选型对比（T4_full en，2026-09-06 第七轮）
+
+| 模型 | 素材 | 首轮溢出 | 重译轮 | 最终溢出 | 匹配率 | 墙钟 |
+|---|---|---|---|---|---|---|
+| deepseek-chat（直连） | c1_pure | 0 | 0 | 0 | 100% | 3.2s* |
+| deepseek-chat（直连） | c2_dense | 0 | 0 | 0 | 100% | 4.1s* |
+| z-ai/glm-5.2（OpenRouter 免费） | c1_pure | 0 | 0 | 0 | 100% | 23.1s |
+| z-ai/glm-5.2 | c2_dense | 0 | 0 | 0 | 100% | 23.4s |
+| minimax/minimax-m2.7:free | c1_pure | 0 | 0 | 0 | 100% | 17.2s |
+| minimax/minimax-m2.7:free | c2_dense | 0 | 0 | 0 | 100% | 38.9s |
+
+（* 历史缓存重放；新模型为含 LLM 调用的真实墙钟。）
+
+结论：**限长闭环兜底下，三模型的同步指标等价**（首轮溢出 0、零重译、匹配率
+100%）——时长约束把"翻译模型差异"对音画同步的影响压平了，差异只剩译文风格
+与成本/可用性。选型建议：直连 deepseek 最稳；OpenRouter 免费档可作零成本
+备选，但有上游饱和风险（google/gemma-4-31b-it:free 实测持续 429，如实记录）。
+工程附带收获：推理模型（glm-5.2）max_tokens=4096 会被 reasoning 耗尽、正文
+为 null——适配器提额到 8192 + reasoning 字段兜底；429 限流纳入退避重试。
+
 ## 第四轮自主优化（2026-09-06 晚，d2a7604 / bec158b）
 
 | 项 | 内容 | 实测收益 |

@@ -70,7 +70,7 @@ class LLMTranslator:
                     timeout=120,
                 )
 
-            resp = post_with_retry(build)
+            resp = post_with_retry(build, tries=4, backoff=6.0)
             resp.raise_for_status()
             return "".join(
                 b.get("text", "") for b in resp.json().get("content", [])
@@ -82,19 +82,26 @@ class LLMTranslator:
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 json={
                     "model": self.model, "temperature": 0.3,
-                    # 不带 max_tokens 时部分供应商按整个上下文预扣补全预算，直接 400
-                    "max_tokens": 4096,
+                    # 不带 max_tokens 时部分供应商按整个上下文预扣补全预算直接 400；
+                    # 推理模型（如 glm-5.2）会先消耗大量 reasoning token，4096
+                    # 常常不够它输出正文——给到 8192
+                    "max_tokens": 8192,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user_prompt},
                     ],
                 },
-                timeout=120,
+                timeout=180,
             )
 
-        resp = post_with_retry(build_openai)
+        resp = post_with_retry(build_openai, tries=4, backoff=6.0)
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        msg = resp.json()["choices"][0]["message"]
+        content = msg.get("content") or ""
+        if not content.strip():
+            # 推理模型 token 耗尽时正文为 null，答案可能落在 reasoning 字段里
+            content = msg.get("reasoning") or ""
+        return content
 
     # ---- 提示词与解析 ----
     def _build_prompt(self, segments) -> str:
@@ -115,6 +122,8 @@ class LLMTranslator:
 
     @staticmethod
     def _parse(text: str, n: int) -> Optional[List[str]]:
+        if not text:
+            return None
         m = re.search(r"\[.*\]", text, re.S)
         if not m:
             return None

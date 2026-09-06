@@ -24,15 +24,19 @@ def retry_call(fn: Callable, tries: int = 3, backoff: float = 2.0):
 
 def post_with_retry(build: Callable[[], httpx.Response], tries: int = 3,
                     backoff: float = 2.0) -> httpx.Response:
-    """build() 每次重新发请求；5xx 与连接类错误重试，4xx 直接抛。"""
+    """build() 每次重新发请求；5xx、429 限流与连接类错误重试，其余 4xx 直接抛。
+
+    429 必须重试：免费档（OpenRouter :free 等）按分钟限流是常态，退避后
+    通常就过了；不重试会让整条流水线死于一次限流。
+    """
     last: Exception = RuntimeError("unreachable")
     for i in range(tries):
         try:
             resp = build()
-            if resp.status_code >= 500:
+            if resp.status_code >= 500 or resp.status_code == 429:
                 raise httpx.HTTPStatusError(
-                    f"服务端错误 {resp.status_code}", request=resp.request,
-                    response=resp)
+                    f"服务端错误/限流 {resp.status_code}",
+                    request=resp.request, response=resp)
             return resp
         except httpx.TransportError as e:  # 连接/超时类
             last = e

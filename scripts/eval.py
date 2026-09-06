@@ -35,7 +35,8 @@ TIERS = {
 
 def one_run(video: Path, lang: str, tier: str, workroot: Path,
             tts_provider: str = "edge", asr_provider: str = "",
-            asr_model=None) -> dict:
+            asr_model=None, llm_base_url: str = None,
+            llm_model: str = None) -> dict:
     meta = json.loads((video.parent / "meta.json").read_text(encoding="utf-8"))
     info = next(m for m in meta if m["name"] == video.stem)
     video_seconds = probe_duration(video)
@@ -49,10 +50,12 @@ def one_run(video: Path, lang: str, tier: str, workroot: Path,
     suffix = f"{video.stem}_{tier}_{lang}" + (
         f"_{tts_provider}" if tts_provider != "edge" else "") + (
         f"_{asr_tag}" if (asr_provider and asr_provider != "openrouter")
-        else "")
+        else "") + (
+        f"_llm{llm_model.replace('/', '__')}" if llm_model else "")
     out = run(video, lang, workdir=str(workroot / suffix),
               tts_provider=tts_provider, asr_provider=asr_provider,
-              asr_model=asr_model, **TIERS[tier])
+              asr_model=asr_model, llm_base_url=llm_base_url,
+              llm_model=llm_model, **TIERS[tier])
     wall = time.time() - t0
 
     rdir = workroot / suffix / video.stem
@@ -71,6 +74,7 @@ def one_run(video: Path, lang: str, tier: str, workroot: Path,
                               tts_provider=report["tts_provider"])
     m["clip"], m["lang"], m["tier"] = video.stem, lang, tier
     m["asr"] = asr_tag
+    m["llm"] = llm_model or "deepseek-chat"
     print(f"[eval] {video.stem} {lang} {tier} asr={m['asr']}: "
           f"溢出率 {m['overflow_rate']:.0%} 匹配率 {m['match_rate']:.0%} "
           f"耗时 {m['wall_seconds']}s", flush=True)
@@ -90,6 +94,10 @@ def main() -> None:
                     help="E5 ASR 选型对比用；local=本地 faster-whisper")
     ap.add_argument("--asr-model", default=None,
                     help="local: tiny/base/small")
+    ap.add_argument("--llm-base-url", default=None,
+                    help="E6 LLM 选型对比：覆盖 LLM 端点（OpenRouter 网关自动配 key）")
+    ap.add_argument("--llm-model", default=None,
+                    help="E6 LLM 选型对比：覆盖翻译模型")
     args = ap.parse_args()
 
     set_dir = Path(args.set)
@@ -110,18 +118,22 @@ def main() -> None:
                                        ROOT / "artifacts" / "eval" / "runs",
                                        tts_provider=args.tts,
                                        asr_provider=args.asr,
-                                       asr_model=args.asr_model))
+                                       asr_model=args.asr_model,
+                                       llm_base_url=args.llm_base_url,
+                                       llm_model=args.llm_model))
 
     out = ROOT / "artifacts" / "eval" / "results.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    # 按 (clip, lang, tier, asr) 合并进历史结果：增量重跑不冲掉其他行
+    # 按 (clip, lang, tier, asr, llm) 合并进历史结果：增量重跑不冲掉其他行
     if out.exists():
         old = json.loads(out.read_text(encoding="utf-8"))
         key = lambda m: (m.get("clip"), m.get("lang"), m.get("tier"),
-                         m.get("asr", "openrouter"))
+                         m.get("asr", "openrouter"),
+                         m.get("llm", "deepseek-chat"))
         merged = {}
         for m in old:
             m.setdefault("asr", "openrouter")  # 旧行归一化，新键不丢历史
+            m.setdefault("llm", "deepseek-chat")
             merged[key(m)] = m
         for m in results:
             merged[key(m)] = m

@@ -93,7 +93,9 @@ def stage_asr(video: Path, out_dir: Path, settings: Settings, *,
 def stage_translate(segments: list, target_lang: str, out_dir: Path,
                     settings: Settings, *, translator_mode: str = "llm",
                     limit_translation: bool = True,
-                    glossary: dict = None) -> list:
+                    glossary: dict = None,
+                    llm_base_url: str = None,
+                    llm_model: str = None) -> list:
     tr_file = out_dir / f"segments_translated.{target_lang}.json"
     if tr_file.exists():
         cached = load_segments(tr_file)
@@ -111,13 +113,19 @@ def stage_translate(segments: list, target_lang: str, out_dir: Path,
 
     if translator_mode == "echo":
         tr = EchoTranslator()
-    elif settings.llm_api_key:
-        tr = LLMTranslator(settings.llm_api_key, settings.llm_base_url,
-                           settings.llm_model, target_lang,
-                           limit=limit_translation, glossary=glossary)
     else:
-        _log("translate", "未配置 LLM_API_KEY，退化为 echo 模式（不翻译）")
-        tr = EchoTranslator()
+        base_url = llm_base_url or settings.llm_base_url
+        # 供应商 key 跟着端点走：OpenRouter 网关用它自己的 key（E6 选型用）
+        api_key = (settings.openrouter_api_key
+                   if "openrouter" in base_url.lower()
+                   else settings.llm_api_key)
+        if api_key:
+            tr = LLMTranslator(api_key, base_url,
+                               llm_model or settings.llm_model, target_lang,
+                               limit=limit_translation, glossary=glossary)
+        else:
+            _log("translate", "未配置 LLM_API_KEY，退化为 echo 模式（不翻译）")
+            tr = EchoTranslator()
     tr.translate_all(segments)
     save_segments(segments, tr_file)
     protocol = getattr(tr, "protocol", "echo")
@@ -133,7 +141,9 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
                     retry_overflow: bool = True, tts_rate: str = None,
                     glossary: dict = None, max_retry_rounds: int = 2,
                     video_total: float = None,
-                    max_workers: int = IO_WORKERS) -> dict:
+                    max_workers: int = IO_WORKERS,
+                    llm_base_url: str = None,
+                    llm_model: str = None) -> dict:
     """返回 {"tts": 名称, "overflow_before_retry": 首轮溢出数,
     "retry_rounds": 轮数, "measured_cps": 实测语速}"""
     tts = make_tts(tts_provider, target_lang, voice, settings, rate=tts_rate)
@@ -208,8 +218,13 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
             rounds += 1
             n_round_start = len(overflows)
             shrink = 0.75 ** (rounds - 1)
-            tr = LLMTranslator(settings.llm_api_key, settings.llm_base_url,
-                               settings.llm_model, target_lang,
+            retry_key = (settings.openrouter_api_key
+                         if "openrouter" in (llm_base_url
+                                             or settings.llm_base_url).lower()
+                         else settings.llm_api_key)
+            tr = LLMTranslator(retry_key,
+                               llm_base_url or settings.llm_base_url,
+                               llm_model or settings.llm_model, target_lang,
                                glossary=glossary)
             _log("retry", f"第{rounds}轮：{n_round_start} 段配音超时，"
                           f"按字符预算重译（实测语速 {cps} 字符/秒）")
@@ -384,6 +399,7 @@ def stage_render(video_for_mux: Path, track: Path, segments: list,
         "retry_rounds": stats.get("retry_rounds", 0),
         "measured_cps": stats.get("measured_cps"),
         "voice": stats.get("voice"),
+        "llm_model": stats.get("llm_model"),
         "keep_bgm": bgm_kept,
         "stage_timings": stats.get("stage_timings"),
         "segments": [
@@ -418,7 +434,8 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         limit_translation: bool = True, allow_atempo: bool = True,
         retry_overflow: bool = True, tts_rate: str = None,
         keep_bgm: bool = True, asr_onset_shift: float = None,
-        auto_voice: bool = True,
+        auto_voice: bool = True, llm_base_url: str = None,
+        llm_model: str = None,
         subtitle_style: str = SUBTITLE_STYLE) -> Path:
     global _progress_cb
     _progress_cb = progress
@@ -461,7 +478,8 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
 
     segments = timed("translate", stage_translate, segments, target_lang,
                      out_dir, settings, translator_mode=translator_mode,
-                     limit_translation=limit_translation, glossary=glossary)
+                     limit_translation=limit_translation, glossary=glossary,
+                     llm_base_url=llm_base_url, llm_model=llm_model)
     tts_stats = timed("tts_align", stage_tts_align, segments, target_lang,
                       out_dir, settings,
                       tts_provider=tts_provider,
@@ -469,8 +487,10 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
                       allow_atempo=allow_atempo,
                       retry_overflow=retry_overflow,
                       tts_rate=tts_rate, glossary=glossary,
-                      video_total=probe_duration(video))
+                      video_total=probe_duration(video),
+                      llm_base_url=llm_base_url, llm_model=llm_model)
     tts_stats["stage_timings"] = timings
+    tts_stats["llm_model"] = llm_model or settings.llm_model
     tracks = timed("mix", stage_mix, segments, target_lang, video, out_dir,
                    keep_bgm=keep_bgm)
     video_for_mux = timed("lipsync", stage_lipsync, video, tracks["dub"],
