@@ -26,6 +26,8 @@ def main(argv=None) -> int:
                    choices=["", "local", "openrouter"],
                    help="ASR 通道，默认读 .env 的 ASR_PROVIDER")
     t.add_argument("--asr-model", default=None, help="local: tiny/base/small")
+    t.add_argument("--onset-shift", type=float, default=None,
+                   help="ASR 起点前移补偿秒数（缺省：云 ASR 0.12 / 本地 0）")
     t.add_argument("--lipsync", default="none",
                    choices=["none", "syncso", "latentsync"])
     t.add_argument("--no-subs", action="store_true", help="不烧录字幕")
@@ -59,7 +61,7 @@ def main(argv=None) -> int:
                   voice=args.voice, asr_provider=args.asr_provider,
                   asr_model=args.asr_model,
                   burn_subs=not args.no_subs, lipsync_provider=args.lipsync,
-                  keep_bgm=not args.no_bgm)
+                  keep_bgm=not args.no_bgm, asr_onset_shift=args.onset_shift)
         print(f"\n成品: {out}")
         return 0
 

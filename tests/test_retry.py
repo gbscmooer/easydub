@@ -1,5 +1,6 @@
 from easydub.align import find_overflow
 from easydub.models import Segment
+from easydub.services.http import retry_call
 
 
 def make_seg(start, end, translated, action):
@@ -26,3 +27,27 @@ def test_empty_when_no_overflow():
         make_seg(0.0, 1.0, "yo", "atempo"),   # 变速不算超时
     ]
     assert find_overflow(segs) == []
+
+
+def test_retry_call_succeeds_after_transient_failure():
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 2:
+            raise TimeoutError("WSS 瞬断")
+        return "ok"
+
+    assert retry_call(flaky, tries=3, backoff=0) == "ok"
+    assert len(calls) == 2
+
+
+def test_retry_call_exhausts_and_raises():
+    def always_bad():
+        raise TimeoutError("still down")
+
+    try:
+        retry_call(always_bad, tries=2, backoff=0)
+        raise AssertionError("应当抛出最后一次异常")
+    except TimeoutError:
+        pass

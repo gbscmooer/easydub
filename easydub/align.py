@@ -67,6 +67,27 @@ def find_overflow(segments, cps: float = 14) -> List[dict]:
     return plans
 
 
+def apply_onset_shift(segments, shift: float, min_gap: float = 0.05) -> int:
+    """把每段起止整体前移 shift 秒，补偿云 ASR 起点系统性偏晚。
+
+    云 ASR（fish transcribe 等）受语音软起音影响，检出起点普遍比真实
+    开口晚 0.1~0.2s（eval 实测 mean 0.156s），配音/字幕跟着晚。起止同步
+    前移（保槽位时长，预算与对齐逻辑不受扰），前移量受上一段终点约束：
+    最多借完句间空隙、留 min_gap 防贴脸。返回实际改动的段数。
+    """
+    n = 0
+    prev_end = 0.0
+    for seg in segments:
+        allowed = max(0.0, seg.start - prev_end - min_gap)
+        d = min(shift, allowed)
+        if d > 0:
+            seg.start = round(seg.start - d, 3)
+            seg.end = round(seg.end - d, 3)
+            n += 1
+        prev_end = seg.end
+    return n
+
+
 def calibrate_cps(segments, base_cps: float) -> float:
     """用本次 TTS 实测时长反推实际语速（字符/秒），收紧重译预算。
 

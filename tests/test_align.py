@@ -1,5 +1,6 @@
 """时长对齐与碎段合并的纯逻辑单测：不需要 ffmpeg / 网络 / API key。"""
-from easydub.align import calibrate_cps, plan_alignment, reclassify_spill
+from easydub.align import (apply_onset_shift, calibrate_cps, plan_alignment,
+                           reclassify_spill)
 from easydub.models import Segment
 from easydub.services.asr import _join_words, merge_segments
 
@@ -7,6 +8,30 @@ from easydub.services.asr import _join_words, merge_segments
 def _seg(start, end, translated, audio_duration, action):
     return Segment(start=start, end=end, text="中文", translated=translated,
                    audio_duration=audio_duration, action=action)
+
+
+class TestApplyOnsetShift:
+    def test_shifts_both_bounds_preserving_slot(self):
+        segs = [_seg(10.0, 12.0, "a", 1.0, "fit"),
+                _seg(20.0, 21.5, "b", 1.0, "fit")]
+        n = apply_onset_shift(segs, 0.12)
+        assert n == 2
+        assert segs[0].start == 9.88 and segs[0].end == 11.88
+        assert segs[0].slot == 2.0  # 槽位不变，预算/对齐逻辑不受扰
+
+    def test_borrows_only_available_gap(self):
+        # 句间空隙只有 0.08s：只能借到空隙 - min_gap
+        segs = [_seg(0.0, 1.0, "a", 1.0, "fit"),
+                _seg(1.08, 2.0, "b", 1.0, "fit")]
+        apply_onset_shift(segs, 0.12)
+        assert segs[0].start == 0.0          # 首段前面没空间（留 min_gap）
+        assert segs[1].start == 1.05         # 只能借到空隙 - min_gap
+        assert segs[1].end == 1.97
+
+    def test_zero_shift_noop(self):
+        segs = [_seg(1.0, 2.0, "a", 1.0, "fit")]
+        assert apply_onset_shift(segs, 0.0) == 0
+        assert segs[0].start == 1.0
 
 
 class TestCalibrateCps:

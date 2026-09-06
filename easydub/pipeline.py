@@ -11,7 +11,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .align import calibrate_cps, find_overflow, plan_alignment, reclassify_spill
+from .align import (apply_onset_shift, calibrate_cps, find_overflow,
+                    plan_alignment, reclassify_spill)
 from .config import Settings
 from .media import (SUBTITLE_STYLE, build_dub_track, change_tempo,
                     concat_videos, cut_clip, extract_audio,
@@ -19,6 +20,7 @@ from .media import (SUBTITLE_STYLE, build_dub_track, change_tempo,
                     has_audio_stream, mix_with_bgm, mux, normalize_fps,
                     probe_duration, trim_silence)
 from .models import Segment, load_segments, save_segments
+from .services.http import retry_call
 from .services.asr import transcribe, transcribe_openrouter
 from .services.tts import make_tts
 from .services.translator import CPS_TABLE, EchoTranslator, LLMTranslator
@@ -53,7 +55,8 @@ def _parse_glossary(raw: str) -> dict:
 
 # ---------------- 阶段 1：ASR ----------------
 def stage_asr(video: Path, out_dir: Path, settings: Settings, *,
-              asr_provider: str = "", asr_model=None) -> list:
+              asr_provider: str = "", asr_model=None,
+              onset_shift: float = 0.0) -> list:
     seg_file = out_dir / "segments.json"
     if seg_file.exists():
         segments = load_segments(seg_file)
@@ -71,6 +74,10 @@ def stage_asr(video: Path, out_dir: Path, settings: Settings, *,
         _log("asr", f"本地识别（模型 {asr_model or settings.asr_model_size}）...")
         raw = transcribe(wav, asr_model or settings.asr_model_size)
     segments = [Segment(**d) for d in raw]
+    if onset_shift > 0 and segments:
+        n = apply_onset_shift(segments, onset_shift)
+        _log("asr", f"起点前移补偿 {onset_shift}s（{n} 段，"
+                    f"云 ASR 起点系统性偏晚）")
     save_segments(segments, seg_file)
     _log("asr", f"识别到 {len(segments)} 段")
     return segments
@@ -84,10 +91,15 @@ def stage_translate(segments: list, target_lang: str, out_dir: Path,
     tr_file = out_dir / f"segments_translated.{target_lang}.json"
     if tr_file.exists():
         cached = load_segments(tr_file)
-        # 源文本变了（ASR 重跑、断句策略调整）时旧译文作废，防止错位
-        if [s.text for s in cached] == [s.text for s in segments]:
-            _log("translate", "命中缓存")
-            return cached
+        # 源文本变了（ASR 重跑、断句策略调整）时旧译文作废，防止错位；
+        # 文本没变也不能直接返回缓存对象——那会把旧时间轴带回来，悄悄
+        # 回滚 ASR 侧的起点补偿等时间轴修正。只借译文，时间轴用新的。
+        if ([s.text for s in cached] == [s.text for s in segments]
+                and len(cached) == len(segments)):
+            for seg, c in zip(segments, cached):
+                seg.translated = c.translated
+            _log("translate", "命中缓存（沿用译文，时间轴取当前）")
+            return segments
     if not segments:
         return segments
 
@@ -124,8 +136,13 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
     tts_dir.mkdir(exist_ok=True)
 
     def _synth(text, path):
-        tts.synth(text, path)
-        trim_silence(path, path)
+        path = Path(path)
+        # 先写 .part 再原子替换：中途崩溃不会留下"看似有效"的截断缓存
+        part = path.with_suffix(path.suffix + ".part")
+        # edge-tts 的 WSS 连接实测会瞬断：合成包一层退避重试
+        retry_call(lambda: tts.synth(text, part), tries=3, backoff=2.0)
+        trim_silence(part, path)
+        part.unlink(missing_ok=True)
 
     def _tts_path(i: int, text: str) -> Path:
         # 文件名带译文指纹：译文变了（重译）不会错拿旧配音
@@ -136,8 +153,15 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
         audio = _tts_path(i, seg.translated)
         if not audio.exists():
             _synth(seg.translated, audio)
+        try:
+            seg.audio_duration = probe_duration(audio)
+        except RuntimeError:
+            # 历史遗留的截断缓存：删掉重合成，而不是让整条流水线报废
+            _log("tts", f"缓存音频损坏，重合成：{audio.name}")
+            audio.unlink(missing_ok=True)
+            _synth(seg.translated, audio)
+            seg.audio_duration = probe_duration(audio)
         seg.audio_path = str(audio)
-        seg.audio_duration = probe_duration(audio)
         plan = plan_alignment(seg.slot, seg.audio_duration,
                               allow_atempo=allow_atempo)
         seg.tempo, seg.action = plan["tempo"], plan["action"]
@@ -379,7 +403,7 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         lipsync_provider: str = "none", progress=None,
         limit_translation: bool = True, allow_atempo: bool = True,
         retry_overflow: bool = True, tts_rate: str = None,
-        keep_bgm: bool = True,
+        keep_bgm: bool = True, asr_onset_shift: float = None,
         subtitle_style: str = SUBTITLE_STYLE) -> Path:
     global _progress_cb
     _progress_cb = progress
@@ -391,9 +415,14 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
     out_dir = Path(workdir or settings.workdir) / video.stem
     out_dir.mkdir(parents=True, exist_ok=True)
     glossary = _parse_glossary(settings.glossary)
+    # 云 ASR 起点系统性偏晚（eval 实测 ~0.15s），默认对云端通道前移补偿；
+    # 本地 whisper 偏差特性不同，默认不动。显式传参可覆盖。
+    provider = asr_provider or settings.asr_provider
+    if asr_onset_shift is None:
+        asr_onset_shift = 0.12 if provider == "openrouter" else 0.0
 
     segments = stage_asr(video, out_dir, settings, asr_provider=asr_provider,
-                         asr_model=asr_model)
+                         asr_model=asr_model, onset_shift=asr_onset_shift)
     if not segments:
         # 规格要求无声视频"正常完成（零段落）"：跳过翻译/配音，出静音成品
         _log("asr", "未识别到语音，按零段落处理：输出静音成品")
