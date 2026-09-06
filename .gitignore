@@ -1,0 +1,17 @@
+.venv/
+.venv.mac.bak/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+artifacts/
+samples/
+web/node_modules/
+web/dist/
+.DS_Store
+# 媒体素材与产物一律不入库
+*.mp4
+*.mov
+*.wav
+*.png
+*.jpg
