@@ -11,8 +11,9 @@ from pathlib import Path
 
 from .align import find_overflow, plan_alignment
 from .config import Settings
-from .media import (build_dub_track, change_tempo, extract_audio, gen_srt,
-                    mux, probe_duration, trim_silence)
+from .media import (build_dub_track, change_tempo, concat_videos, cut_clip,
+                    extract_audio, extract_audio_slice, gen_srt, mux,
+                    normalize_fps, probe_duration, trim_silence)
 from .models import Segment, load_segments, save_segments
 from .services.asr import transcribe, transcribe_openrouter
 from .services.tts import make_tts
@@ -20,13 +21,24 @@ from .services.translator import EchoTranslator, LLMTranslator
 
 
 def _log(stage: str, msg: str) -> None:
-    print(f"[{stage}] {msg}")
+    print(f"[{stage}] {msg}", flush=True)
+    if _progress_cb is not None:
+        try:
+            _progress_cb(stage)
+        except Exception:  # 回调异常不影响流水线
+            pass
+
+
+# Web 端注入的进度回调（并发=1，模块级单回调即可）
+_progress_cb = None
 
 
 def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         translator_mode: str = "llm", voice=None, asr_provider: str = "",
         asr_model=None, burn_subs: bool = True, workdir=None,
-        lipsync_provider: str = "none") -> Path:
+        lipsync_provider: str = "none", progress=None) -> Path:
+    global _progress_cb
+    _progress_cb = progress
     t0 = time.time()
     settings = Settings()
     video = Path(video)
@@ -55,7 +67,8 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         save_segments(segments, seg_file)
         _log("asr", f"识别到 {len(segments)} 段")
     if not segments:
-        raise RuntimeError("未识别到任何语音，请确认视频里有清晰人声")
+        # 规格要求无声视频"正常完成（零段落）"：跳过翻译/配音，出静音成品
+        _log("asr", "未识别到语音，按零段落处理：输出静音成品")
 
     # 2. 翻译：按槽位秒数限长的 LLM 翻译
     # 翻译/TTS/成品都按目标语言隔离——同一视频可并行出多语言版本，切语言不串缓存
@@ -69,7 +82,7 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         if cached_ok:
             segments = cached
             _log("translate", "命中缓存")
-    if not cached_ok:
+    if not cached_ok and segments:
         if translator_mode == "echo":
             tr = EchoTranslator()
         elif settings.llm_api_key:
@@ -148,18 +161,69 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
     track = build_dub_track(clips, total, out_dir / f"dub_track.{target_lang}.wav")
     _log("mix", f"音轨合成完毕（{len(clips)} 段）")
 
-    # 6. lip-sync（D8 接入点）
+    # 6. lip-sync：只对人脸出镜段对口型（空镜/产品镜头保留原画面）。
+    #    音轨始终是我们合成的 dub_track——只取口型结果的画面，不吃它的音轨。
+    video_for_mux = video
     if lipsync_provider != "none":
+        from .services.facedetect import detect_face_segments
         from .services.lipsync import make_lipsync
-        provider = make_lipsync(lipsync_provider, settings)
-        raise NotImplementedError(
-            f"lip-sync（{provider.name}）在 D8 接入，当前先跑通字幕+配音链路"
-        )
 
-    # 7. 字幕 + 封装成品（有 libass 烧录，否则软字幕轨）
-    srt = gen_srt(segments, out_dir / f"subs.{target_lang}.srt", bilingual=True)
+        provider = make_lipsync(lipsync_provider, settings)
+        _log("lipsync", f"检测人脸出镜段（{provider.name}）...")
+        face_segs = detect_face_segments(video)
+        master = normalize_fps(video, out_dir / "master_25fps.mp4")
+        # 时间轴切块：人脸段标记 True，其余原样保留
+        pieces = []
+        cur = 0.0
+        for s, e in face_segs:
+            if s > cur + 0.05:
+                pieces.append((cur, s, False))
+            pieces.append((max(s, cur), e, True))
+            cur = e
+        if cur < total - 0.05:
+            pieces.append((cur, total, False))
+
+        if not any(is_face for _, _, is_face in pieces):
+            _log("lipsync", "未检测到人脸段，跳过口型同步")
+        else:
+            ls_dir = out_dir / "lipsync"
+            ls_dir.mkdir(exist_ok=True)
+            synced = {}
+            for idx, (s, e, is_face) in enumerate(pieces):
+                if not is_face:
+                    continue
+                out_clip = ls_dir / f"sync_{idx:03d}.mp4"
+                if not out_clip.exists():
+                    _log("lipsync", f"段{idx} [{s:.1f}-{e:.1f}s] 口型同步中...")
+                    clip = cut_clip(master, s, e, ls_dir / f"clip_{idx:03d}.mp4")
+                    audio = extract_audio_slice(track, s, e,
+                                                ls_dir / f"audio_{idx:03d}.wav")
+                    try:
+                        provider.apply(clip, audio, out_clip)
+                    except Exception as e:
+                        # 切出镜头/单帧无脸会让整段失败：回退原画面，不阻断全片
+                        _log("lipsync", f"段{idx} 失败（{e}），该段回退原画面")
+                        out_clip.unlink(missing_ok=True)
+                        continue
+                synced[idx] = out_clip
+            if synced:
+                final_clips = [
+                    synced[idx] if idx in synced
+                    else cut_clip(master, s, e, ls_dir / f"clip_{idx:03d}.mp4")
+                    for idx, (s, e, is_face) in enumerate(pieces)
+                ]
+                video_for_mux = concat_videos(
+                    final_clips, out_dir / f"sync_master.{target_lang}.mp4")
+                _log("lipsync", f"口型段拼回时间轴（{len(synced)} 段成功）")
+            else:
+                _log("lipsync", "全部人脸段口型失败，整片使用原画面")
+
+    # 7. 字幕 + 封装成品（有 libass 烧录+软字幕双轨，否则仅软字幕轨）
+    srt = gen_srt(segments, out_dir / f"subs.{target_lang}.srt",
+                  bilingual=True) if segments else None
     out_video = out_dir / f"{video.stem}.dub.{target_lang}.mp4"
-    mux(video, track, out_video, srt if burn_subs else None, lang=target_lang)
+    mux(video_for_mux, track, out_video, srt if burn_subs else None,
+        lang=target_lang)
 
     # 8. 对齐质量报告：后续优化提示词 / 面试讲数据都靠它
     report = {
@@ -187,3 +251,13 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
     _log("done", f"输出 {out_video}，耗时 {time.time() - t0:.1f}s，"
                  f"对齐 {report['summary']}")
     return out_video
+
+
+def run_managed(video, target_lang: str = "en", **kw) -> Path:
+    """带进度回调复位保护的 run：Web 后台线程用它，避免回调泄漏到下一次任务。"""
+    global _progress_cb
+    _progress_cb = kw.pop("progress", None)
+    try:
+        return run(video, target_lang, **kw)
+    finally:
+        _progress_cb = None

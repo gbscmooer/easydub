@@ -9,6 +9,8 @@ from typing import List, Optional
 
 import httpx
 
+from .http import post_with_retry
+
 # 各语言旁白语速粗估（字符/秒，含空格），用于给译文设字符数上限
 CPS_TABLE = {"en": 14, "es": 14, "ko": 8, "ja": 7, "zh": 4}
 LANG_NAME = {"en": "英语", "ja": "日语", "ko": "韩语", "es": "西班牙语", "zh": "中文"}
@@ -46,39 +48,45 @@ class LLMTranslator:
     # ---- HTTP ----
     def _chat(self, user_prompt: str) -> str:
         if self.protocol == "anthropic":
-            resp = httpx.post(
-                f"{self.base_url}/v1/messages",
-                headers={
-                    "x-api-key": self.api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": self.model, "max_tokens": 4096,
-                    "system": SYSTEM_PROMPT,
-                    "messages": [{"role": "user", "content": user_prompt}],
-                },
-                timeout=120,
-            )
+            def build():
+                return httpx.post(
+                    f"{self.base_url}/v1/messages",
+                    headers={
+                        "x-api-key": self.api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": self.model, "max_tokens": 4096,
+                        "system": SYSTEM_PROMPT,
+                        "messages": [{"role": "user", "content": user_prompt}],
+                    },
+                    timeout=120,
+                )
+
+            resp = post_with_retry(build)
             resp.raise_for_status()
             return "".join(
                 b.get("text", "") for b in resp.json().get("content", [])
             )
 
-        resp = httpx.post(
-            f"{self.base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json={
-                "model": self.model, "temperature": 0.3,
-                # 不带 max_tokens 时部分供应商按整个上下文预扣补全预算，直接 400
-                "max_tokens": 4096,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-            },
-            timeout=120,
-        )
+        def build_openai():
+            return httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": self.model, "temperature": 0.3,
+                    # 不带 max_tokens 时部分供应商按整个上下文预扣补全预算，直接 400
+                    "max_tokens": 4096,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                },
+                timeout=120,
+            )
+
+        resp = post_with_retry(build_openai)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 

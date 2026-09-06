@@ -1,4 +1,4 @@
-"""LatentSync 的 HTTP 服务壳（跑在 GPU 服务器 / RTX 5090 Windows 机上）。
+"""LatentSync 的 HTTP 服务壳（跑在有 GPU 的机器上：本机 WSL 5090 或 Windows 机）。
 
 HTTP 契约（与 easydub/easydub/services/lipsync.py 的客户端约定一致）：
   GET  /health                -> {"gpu": "...", "pending": n}
@@ -6,9 +6,13 @@ HTTP 契约（与 easydub/easydub/services/lipsync.py 的客户端约定一致�
   GET  /jobs/{job_id}         -> {"state": "queued|running|done|error", "error": ...}
   GET  /jobs/{job_id}/result  -> 口型对齐后的 mp4 文件流
 
-启动:  python lipsync_server.py     （监听 0.0.0.0:8001）
+启动（Linux/WSL，latentsync conda 环境）:
+  LATENTSYNC_DIR=~/LatentSync python lipsync_server.py     （监听 0.0.0.0:8001）
+启动（Windows）:  按 README_WINDOWS.md 装好后直接 python lipsync_server.py
 依赖:  pip install fastapi uvicorn python-multipart
 """
+import os
+import sys
 import subprocess
 import tempfile
 import threading
@@ -18,16 +22,18 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-# ============ 装好 LatentSync 后，按实际情况修改这两行 ============
-# LatentSync 仓库目录
-CWD = r"C:\LatentSync"
-# 推理命令模板。先手动在命令行跑通一次官方推理，把能用的命令填进来，
-# {video} {audio} {out} 会被替换成实际路径。
-# 注意：若 --result_path 实际是"输出目录"而不是文件路径，请改成先输出到
-# 子目录、再把生成的 mp4 路径赋给 out_path 的写法。
-CMD_TEMPLATE = (r"python inference.py --inference_config configs/inference.yaml "
-                r"--video_path {video} --audio_path {audio} --result_path {out}")
-# ================================================================
+# LatentSync 仓库目录（推理命令的工作目录）
+CWD = os.environ.get("LATENTSYNC_DIR", r"C:\LatentSync")
+# 推理命令模板，{video} {audio} {out} 会替换成实际路径。
+# 默认 = LatentSync 1.6 官方推理命令（已在 5090 + torch 2.10/cu128 实测通过）。
+# 用 sys.executable 保证与服务器进程同一 Python（conda 环境里没有裸 `python`）。
+CMD_TEMPLATE = os.environ.get(
+    "LATENTSYNC_CMD",
+    f"{sys.executable} -m scripts.inference "
+    "--unet_config_path configs/unet/stage2_512.yaml "
+    "--inference_ckpt_path checkpoints/latentsync_unet.pt "
+    "--inference_steps 20 --guidance_scale 1.5 --enable_deepcache "
+    "--video_path {video} --audio_path {audio} --video_out_path {out}")
 
 app = FastAPI(title="easydub lipsync server")
 _jobs = {}  # job_id -> {"state", "error", "out_path"}

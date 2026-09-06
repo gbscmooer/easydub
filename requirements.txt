@@ -3,3 +3,9 @@ edge-tts>=6.1.0
 httpx>=0.27
 pydantic-settings>=2.0
 pytest>=8.0
+# 人脸检测分段（OpenCV 5 移除了 CascadeClassifier，锁定 4.x）
+opencv-python-headless>=4.5,<5
+# Web 产品面
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9

@@ -63,6 +63,49 @@ def change_tempo(src, dst, tempo: float) -> Path:
     return Path(dst)
 
 
+def normalize_fps(video, dst, fps: int = 25) -> Path:
+    """lip-sync 主档：LatentSync 以 25fps 训练，开 lip-sync 前先统一帧率。"""
+    _run([
+        "ffmpeg", "-y", "-i", str(video), "-r", str(fps),
+        "-c:v", "libx264", "-crf", "18", "-preset", "fast", "-an", str(dst),
+    ])
+    return Path(dst)
+
+
+def cut_clip(video, start: float, end: float, dst) -> Path:
+    """切子片段（去音轨，统一重编码参数，保证 concat 兼容）。"""
+    _run([
+        "ffmpeg", "-y", "-ss", f"{start:.3f}", "-to", f"{end:.3f}",
+        "-i", str(video),
+        "-c:v", "libx264", "-crf", "18", "-preset", "fast", "-an", str(dst),
+    ])
+    return Path(dst)
+
+
+def extract_audio_slice(track, start: float, end: float, dst,
+                        sr: int = 16000) -> Path:
+    """从配音轨切出 [start,end] 的 16k 单声道 wav，供 lip-sync 提取口型特征。"""
+    _run([
+        "ffmpeg", "-y", "-ss", f"{start:.3f}", "-to", f"{end:.3f}",
+        "-i", str(track), "-ar", str(sr), "-ac", "1", str(dst),
+    ])
+    return Path(dst)
+
+
+def concat_videos(clips: List[Path], dst, fps: int = 25) -> Path:
+    """按顺序拼接片段（concat demuxer + 重编码，规避参数不一致）。"""
+    lst = Path(dst).with_suffix(".concat.txt")
+    lst.write_text("".join(f"file '{Path(c).resolve()}'\n" for c in clips),
+                   encoding="utf-8")
+    _run([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+        "-r", str(fps),
+        "-c:v", "libx264", "-crf", "18", "-preset", "fast", str(dst),
+    ])
+    lst.unlink()
+    return Path(dst)
+
+
 def build_dub_track(clips: List[Tuple[float, str]], total: float, dst) -> Path:
     """把若干段 (起始秒, 音频文件) 放到一条 total 秒的静音底轨上。
 
@@ -155,26 +198,26 @@ def mux(video, audio, dst, srt: Optional[Path] = None,
         lang: str = "en") -> Path:
     """替换音轨输出成品。
 
-    字幕优先烧录（需 libass，要重编码视频）；构建里没有 libass 时
-    自动降级为 mov_text 软字幕轨——播放器里可开关，视频流保持 copy。
+    字幕双层：烧录（需 libass，重编码视频）保证任何播放器可见，
+    同时封 mov_text 软字幕轨（播放器可开关）。构建没有 libass 时只走软字幕，
+    视频流 copy。音轨统一 AAC 48kHz。
     """
     cmd = ["ffmpeg", "-y", "-i", str(video), "-i", str(audio)]
     if srt is not None and _has_subtitles_filter():
+        cmd += ["-i", str(srt)]
         cmd += ["-vf", _subtitles_arg(srt),
-                "-c:v", "libx264", "-crf", "18", "-preset", "fast"]
-        no_subs = False
+                "-map", "0:v:0", "-map", "1:a:0", "-map", "2:s:0",
+                "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+                "-c:s", "mov_text",
+                "-metadata:s:s:0", f"language={_LANG_CODE.get(lang, 'und')}"]
     elif srt is not None:
         cmd += ["-i", str(srt)]
         cmd += ["-map", "0:v:0", "-map", "1:a:0", "-map", "2:s:0"]
         cmd += ["-c:v", "copy", "-c:s", "mov_text",
                 "-metadata:s:s:0", f"language={_LANG_CODE.get(lang, 'und')}"]
-        no_subs = False
     else:
-        cmd += ["-c:v", "copy"]
-        no_subs = True
+        cmd += ["-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy"]
 
-    if no_subs:
-        cmd += ["-map", "0:v:0", "-map", "1:a:0"]
-    cmd += ["-c:a", "aac", "-b:a", "192k", str(dst)]
+    cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", str(dst)]
     _run(cmd)
     return Path(dst)
