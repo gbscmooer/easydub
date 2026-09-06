@@ -26,6 +26,14 @@ jobs:
         with:
           name: pytest-log
           path: pytest_output.txt
+      - name: 失败详情转注解（公开 API 可读）
+        if: failure()
+        run: |
+          if grep -qE "^(FAILED|ERROR)" pytest_output.txt; then
+            grep -E "^(FAILED|ERROR)" pytest_output.txt | head -15 | sed 's/^/::error::/'
+          else
+            tail -40 pytest_output.txt | sed 's/^/::error::/'
+          fi
       - name: 测试门禁
         run: |
           if grep -qE "[0-9]+ (failed|error)" pytest_output.txt; then
