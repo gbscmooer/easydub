@@ -26,6 +26,14 @@ def probe_duration(path) -> float:
     return float(json.loads(out)["format"]["duration"])
 
 
+def has_audio_stream(video) -> bool:
+    out = _run([
+        "ffprobe", "-v", "error", "-select_streams", "a",
+        "-show_entries", "stream=index", "-of", "json", str(video),
+    ])
+    return bool(json.loads(out).get("streams"))
+
+
 def extract_audio(video, dst_wav) -> Path:
     """抽出 16k 单声道 wav，供 ASR 使用。"""
     _run([
@@ -140,6 +148,44 @@ def build_dub_track(clips: List[Tuple[float, str]], total: float, dst) -> Path:
     ]
     _run(cmd)
     return dst
+
+
+def extract_bgm(video, dst, sr: int = 44100) -> Path:
+    """抽出原视频的完整音轨（立体声），作为配音下的背景音乐/环境声。"""
+    _run([
+        "ffmpeg", "-y", "-i", str(video), "-vn",
+        "-ac", "2", "-ar", str(sr), str(dst),
+    ])
+    return Path(dst)
+
+
+def bgm_filtergraph(bgm_gain: float = 0.9, threshold: float = 0.03,
+                    ratio: float = 8, attack_ms: int = 25,
+                    release_ms: int = 400, limit: float = 0.95) -> str:
+    """配音 + 原声闪避混音的滤镜图（纯函数，便于单测）。
+
+    输入 0 = 原声（BGM），输入 1 = 配音轨。sidechaincompress 以配音为
+    侧链触发：配音开口 → 原声按 ratio 压低；句间 → release 内自动抬回。
+    sidechain 消耗一路配音，amix 还要一路，所以配音必须 asplit 成两路。
+    """
+    return (
+        "[1:a]aformat=channel_layouts=stereo,asplit=2[dsc][dmix];"
+        f"[0:a]aformat=channel_layouts=stereo,volume={bgm_gain}[bg];"
+        f"[bg][dsc]sidechaincompress=threshold={threshold}:ratio={ratio}:"
+        f"attack={attack_ms}:release={release_ms}:makeup=1[ducked];"
+        f"[ducked][dmix]amix=inputs=2:normalize=0,alimiter=limit={limit}[m]"
+    )
+
+
+def mix_with_bgm(dub, bgm, dst, **kw) -> Path:
+    """配音轨与原声混合为成片音轨：配音说话时原声自动闪避（ducking）。"""
+    cmd = [
+        "ffmpeg", "-y", "-i", str(bgm), "-i", str(dub),
+        "-filter_complex", bgm_filtergraph(**kw),
+        "-map", "[m]", str(dst),
+    ]
+    _run(cmd)
+    return Path(dst)
 
 
 def _fmt_ts(sec: float) -> str:

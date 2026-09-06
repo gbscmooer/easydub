@@ -29,6 +29,8 @@ def main(argv=None) -> int:
     t.add_argument("--lipsync", default="none",
                    choices=["none", "syncso", "latentsync"])
     t.add_argument("--no-subs", action="store_true", help="不烧录字幕")
+    t.add_argument("--no-bgm", action="store_true",
+                   help="不保留原视频背景音乐（默认配音下自动闪避混入原声）")
     t.add_argument("--force", action="store_true", help="清缓存全量重跑")
 
     r = sub.add_parser("report", help="查看某次运行的对齐报告")
@@ -56,7 +58,8 @@ def main(argv=None) -> int:
                   tts_provider=args.tts, translator_mode=args.translator,
                   voice=args.voice, asr_provider=args.asr_provider,
                   asr_model=args.asr_model,
-                  burn_subs=not args.no_subs, lipsync_provider=args.lipsync)
+                  burn_subs=not args.no_subs, lipsync_provider=args.lipsync,
+                  keep_bgm=not args.no_bgm)
         print(f"\n成品: {out}")
         return 0
 

@@ -14,7 +14,8 @@ from .align import find_overflow, plan_alignment
 from .config import Settings
 from .media import (SUBTITLE_STYLE, build_dub_track, change_tempo,
                     concat_videos, cut_clip, extract_audio,
-                    extract_audio_slice, gen_srt, mux, normalize_fps,
+                    extract_audio_slice, extract_bgm, gen_srt,
+                    has_audio_stream, mix_with_bgm, mux, normalize_fps,
                     probe_duration, trim_silence)
 from .models import Segment, load_segments, save_segments
 from .services.asr import transcribe, transcribe_openrouter
@@ -183,7 +184,13 @@ def stage_tts_align(segments: list, target_lang: str, out_dir: Path,
 
 # ---------------- 阶段 5：配音轨合成 ----------------
 def stage_mix(segments: list, target_lang: str, video: Path,
-              out_dir: Path) -> Path:
+              out_dir: Path, *, keep_bgm: bool = True) -> dict:
+    """合成配音轨，返回 {"dub": 纯配音轨, "render": 成片用音轨}。
+
+    keep_bgm=True 时 render 是"配音 + 原声闪避"混合轨：配音开口时原声
+    （BGM/环境声）被自动压低、句间自动抬回——广告片的配乐不再被整条丢掉。
+    口型对齐只吃纯配音轨（混入 BGM 会污染口型特征提取）。
+    """
     total = probe_duration(video)
     clips = []
     for seg in segments:
@@ -196,10 +203,24 @@ def stage_mix(segments: list, target_lang: str, video: Path,
             clips.append((seg.start, str(adjusted)))
         else:
             clips.append((seg.start, seg.audio_path))
-    track = build_dub_track(clips, total,
-                            out_dir / f"dub_track.{target_lang}.wav")
-    _log("mix", f"音轨合成完毕（{len(clips)} 段）")
-    return track
+    dub = build_dub_track(clips, total,
+                          out_dir / f"dub_track.{target_lang}.wav")
+
+    def _plain(note: str) -> dict:
+        _log("mix", note)
+        return {"dub": dub, "render": dub}
+
+    if not keep_bgm:
+        return _plain(f"音轨合成完毕（{len(clips)} 段，未保留背景音乐）")
+    if not has_audio_stream(video):
+        return _plain("原视频无音轨，跳过背景音乐保留")
+    if not segments:
+        # 零段落（无声视频）：原声直通，成片保留完整原声
+        return _plain("零段落：原声直通作为成片音轨")
+    render = mix_with_bgm(dub, extract_bgm(video, out_dir / "bgm.wav"),
+                          out_dir / f"dub_track_bgm.{target_lang}.wav")
+    _log("mix", f"音轨合成完毕（{len(clips)} 段 + 原声闪避混入）")
+    return {"dub": dub, "render": render}
 
 
 # ---------------- 阶段 6：lip-sync ----------------
@@ -271,7 +292,8 @@ def stage_lipsync(video: Path, track: Path, target_lang: str, out_dir: Path,
 def stage_render(video_for_mux: Path, track: Path, segments: list,
                  target_lang: str, video: Path, out_dir: Path, *,
                  burn_subs: bool = True,
-                 tts_name: str = "?", tts_stats: dict = None) -> Path:
+                 tts_name: str = "?", tts_stats: dict = None,
+                 bgm_kept: bool = False) -> Path:
     srt = gen_srt(segments, out_dir / f"subs.{target_lang}.srt",
                   bilingual=True) if segments else None
     out_video = out_dir / f"{video.stem}.dub.{target_lang}.mp4"
@@ -284,6 +306,7 @@ def stage_render(video_for_mux: Path, track: Path, segments: list,
         "target_lang": target_lang,
         "tts_provider": tts_name,
         "retry_rounds": stats.get("retry_rounds", 0),
+        "keep_bgm": bgm_kept,
         "segments": [
             {"i": i, "start": round(s.start, 3), "end": round(s.end, 3),
              "slot": round(s.slot, 2), "tts": round(s.audio_duration, 2),
@@ -312,6 +335,7 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
         lipsync_provider: str = "none", progress=None,
         limit_translation: bool = True, allow_atempo: bool = True,
         retry_overflow: bool = True, tts_rate: str = None,
+        keep_bgm: bool = True,
         subtitle_style: str = SUBTITLE_STYLE) -> Path:
     global _progress_cb
     _progress_cb = progress
@@ -340,12 +364,14 @@ def run(video, target_lang: str = "en", *, tts_provider: str = "edge",
                                 allow_atempo=allow_atempo,
                                 retry_overflow=retry_overflow,
                                 tts_rate=tts_rate, glossary=glossary)
-    track = stage_mix(segments, target_lang, video, out_dir)
-    video_for_mux = stage_lipsync(video, track, target_lang, out_dir,
+    tracks = stage_mix(segments, target_lang, video, out_dir,
+                       keep_bgm=keep_bgm)
+    video_for_mux = stage_lipsync(video, tracks["dub"], target_lang, out_dir,
                                   settings, lipsync_provider)
-    out_video = stage_render(video_for_mux, track, segments, target_lang,
-                             video, out_dir, burn_subs=burn_subs,
-                             tts_name=tts_stats["tts"], tts_stats=tts_stats)
+    out_video = stage_render(video_for_mux, tracks["render"], segments,
+                             target_lang, video, out_dir, burn_subs=burn_subs,
+                             tts_name=tts_stats["tts"], tts_stats=tts_stats,
+                             bgm_kept=tracks["render"] != tracks["dub"])
 
     _log("done", f"输出 {out_video}，耗时 {time.time() - t0:.1f}s，"
                  f"对齐 {json.loads((out_dir / f'report.{target_lang}.json')
