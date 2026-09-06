@@ -69,9 +69,23 @@ M4（Agent/MCP）、M5（评测）、M6（包装）**不在本轮范围**，勿�
 - [x] S3 M2 手动推理跑通（7.5s 样片 91s 出片，5090 实测）
 - [x] S4 M2 服务 :8001 起（/health 返回 RTX 5090；lipsync-test HTTP 契约全通）
 - [ ] S5 M2 接入流水线 + TED 口型样片
+- [x] S5 M2 接入流水线 + TED 口型样片（40s 切段 216s 出片，2 个人脸段口型成功拼回，回退逻辑实测有效）
 - [x] S6 M3 后端三端点（pytest 21 绿；curl 全流程提交→进度→下载 200）
 - [x] S7 M3 前端页（Vite 构建产物由 FastAPI 托管，页面可访问；浏览器自动化后端缺失，UI 层验证降级为 API E2E）
-- [ ] S8 收尾提交
+- [x] S8 收尾提交（7 条主题提交，git status 干净）
+
+## 7. 复现运行手册（本机）
+
+```bash
+# 1) lipsync 服务（需 GPU，latentsync conda 环境）
+cd ~/LatentSync && LATENTSYNC_DIR=~/LatentSync \
+  /home/kokomilove/miniconda3/envs/latentsync/bin/python \
+  /home/kokomilove/easydub/server/lipsync_server.py     # :8001
+# 2) Web 产品面（主环境 .venv）
+cd /home/kokomilove/easydub && .venv/bin/python -m uvicorn server.app:app --port 8000
+# 3) 命令行全流程（不开口型时无需第 1 步服务）
+.venv/bin/python -m easydub translate 视频.mp4 --lang zh --lipsync latentsync
+```
 
 ## 6. 备忘（踩坑记录，持续追加）
 
