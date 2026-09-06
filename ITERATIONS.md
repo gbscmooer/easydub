@@ -11,7 +11,7 @@
 | 6 | 可观测性 + 数据 + 产品接线 + 架构文档 | R11 分阶段计时进报告；R12 whisper small 档 E5 补充；R13 Web 结果页挂质量报告；R14 ARCHITECTURE.md 现代化 | report.stage_timings 落盘；冷启动分阶段实测数据；small 档 CER 表；/api/jobs/{id}/report 200；架构文档与新特性一致 | ✅ 6e01b23 |
 | 7 | LLM 选型对比（E6） | eval.py 支持 LLM 覆盖（base_url/model/结果键）；deepseek vs OpenRouter 免费档跑 c1/c2 T4；E6 表入档 | E6 表有 ≥2 模型 × 2 素材的溢出/重译收敛/匹配率数据；评测键不串模型 | ✅ feat 提交 |
 | 8 | 演示材料重制 | make_demo_video.py 反映新特性（BGM 闪避前后对比）；demo.gif 重制；README 特性列表与截刷新 | 对比视频含"有无 BGM"两版；README 无过时描述 | ✅ feat 提交 |
-| 9 | Web 健壮性收口 | 上传大小上限（413）；DELETE /api/jobs/{id}（任务删除）；前端历史删除按钮；API 测试 | 超限上传 413；删除后历史与详情 404；测试绿 | ⬜ |
+| 9 | Web 健壮性收口 | 上传大小上限（413）；DELETE /api/jobs/{id}（任务删除）；前端历史删除按钮；API 测试 | 超限上传 413；删除后历史与详情 404；测试绿 | ✅ feat 提交 |
 | 10 | 终版收尾 | 全量回归；评测矩阵终版一致性审视；INTERVIEW.md 增补 6-10 轮素材；迭代总结 | pytest 全绿；results.json 无口径混行；面试材料含量化新数字；本文件闭环 | ⬜ |
 
 ---
@@ -101,6 +101,15 @@
   running 任务拒绝 409；前端历史行加删除按钮。
 - API 测试：413 语义、删除后 GET 404、running 删除 409。
 - 验收：测试绿 + 真实服务 curl 验证。
+
+### 结果
+
+- ✅ `EASYDUB_MAX_UPLOAD_MB`（默认 200）边收边计数超限 413；**修复信号灯
+  泄漏隐患**：名额获取后任何异常路径（413/磁盘错误）都归还 `_busy`，否则
+  服务会永久 409。
+- ✅ DELETE 端点：终态任务删 DB 行+上传文件+产物目录；running/queued 409。
+  真实服务 E2E：done → DELETE 200 → GET 404。前端历史行加删除按钮。
+- 77 测试绿。
 
 ## 第 10 轮：终版收尾
 

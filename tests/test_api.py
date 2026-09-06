@@ -141,6 +141,52 @@ def test_unknown_job_404(client):
     assert client.get("/api/jobs/nope/result").status_code == 404
 
 
+def test_upload_over_limit_413_and_slot_released(client, monkeypatch):
+    import server.app as app_mod
+    monkeypatch.setattr(app_mod, "MAX_UPLOAD", 1024)  # 1KB 上限
+    big = b"x" * (2048)
+    r = client.post("/api/jobs",
+                    files={"video": ("big.mp4", big, "video/mp4")},
+                    data={"lang": "en"})
+    assert r.status_code == 413
+    # 名额必须归还：413 之后仍能正常提交
+    r2 = client.post("/api/jobs",
+                     files={"video": ("ok.mp4", b"x", "video/mp4")},
+                     data={"lang": "en"})
+    assert r2.status_code == 200
+
+
+def test_delete_terminal_job(client):
+    import time
+    r = client.post("/api/jobs",
+                    files={"video": ("a.mp4", b"x", "video/mp4")},
+                    data={"lang": "en"})
+    jid = r.json()["job_id"]
+    for _ in range(50):
+        if client.get(f"/api/jobs/{jid}").json()["state"] in ("done", "error"):
+            break
+        time.sleep(0.05)
+    assert client.delete(f"/api/jobs/{jid}").status_code == 200
+    assert client.get(f"/api/jobs/{jid}").status_code == 404
+    assert client.delete(f"/api/jobs/{jid}").status_code == 404
+
+
+def test_delete_running_job_409(client):
+    import sqlite3, time
+    r = client.post("/api/jobs",
+                    files={"video": ("a.mp4", b"x", "video/mp4")},
+                    data={"lang": "en"})
+    jid = r.json()["job_id"]
+    # 抢在 worker 结束前把状态改成 running（打桩流水线很快）
+    import server.app as app_mod
+    with sqlite3.connect(app_mod.DB_PATH) as con:
+        con.execute("UPDATE jobs SET state='running' WHERE id=?", (jid,))
+    try:
+        assert client.delete(f"/api/jobs/{jid}").status_code == 409
+    finally:
+        time.sleep(0.3)  # 让 worker 收尾，不污染后续断言
+
+
 def test_run_managed_wires_progress_callback(monkeypatch):
     # 回归：run() 会用 progress 参数覆盖模块级回调，run_managed 必须显式传，
     # 否则 Web 进度条永远停在提交瞬间（percent 卡 5%）

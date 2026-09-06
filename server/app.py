@@ -12,6 +12,7 @@
 """
 import json
 import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -28,6 +29,7 @@ UPLOAD_DIR = Path(os.environ.get("EASYDUB_UPLOAD_DIR", ROOT / "artifacts" / "upl
 DB_PATH = Path(os.environ.get("EASYDUB_JOBS_DB", ROOT / "artifacts" / "jobs.db"))
 ALLOWED_LANGS = {"en", "zh", "ja", "ko", "es"}
 ALLOWED_EXT = {".mp4", ".mov"}
+MAX_UPLOAD = int(os.environ.get("EASYDUB_MAX_UPLOAD_MB", "200")) << 20
 
 app = FastAPI(title="easydub web")
 _busy = threading.Semaphore(1)
@@ -115,9 +117,24 @@ async def submit_job(video: UploadFile = File(...),
     job_id = uuid.uuid4().hex[:12]
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     dst = UPLOAD_DIR / f"{job_id}{ext}"
-    with open(dst, "wb") as f:  # 流式落盘，避免大视频吃内存
-        while chunk := await video.read(1 << 20):
-            f.write(chunk)
+    try:
+        # 流式落盘 + 边收边计数：超限即断，防大文件吃满磁盘
+        size = 0
+        with open(dst, "wb") as f:
+            while chunk := await video.read(1 << 20):
+                size += len(chunk)
+                if size > MAX_UPLOAD:
+                    raise HTTPException(
+                        413, f"文件超过 {MAX_UPLOAD >> 20}MB 上限")
+                f.write(chunk)
+    except HTTPException:
+        dst.unlink(missing_ok=True)
+        _busy.release()  # 名额必须归还，否则服务永久 409
+        raise
+    except Exception:
+        dst.unlink(missing_ok=True)
+        _busy.release()
+        raise
 
     with _db() as con:
         con.execute(
@@ -174,6 +191,25 @@ def job_report(job_id: str):
     if not html_path.exists():
         raise HTTPException(404, "报告文件不存在")
     return FileResponse(html_path, media_type="text/html")
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: str) -> dict:
+    """删除终态任务：任务行 + 上传文件 + 产物目录。进行中任务拒绝。"""
+    with _db() as con:
+        row = con.execute("SELECT state, video, result FROM jobs WHERE id=?",
+                          (job_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, f"任务不存在: {job_id}")
+    if row["state"] in ("queued", "running"):
+        raise HTTPException(409, f"任务进行中（{row['state']}），不能删除")
+    with _db() as con:
+        con.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+    Path(row["video"]).unlink(missing_ok=True)
+    shutil.rmtree(ROOT / "artifacts" / job_id, ignore_errors=True)
+    if row["result"]:
+        Path(row["result"]).unlink(missing_ok=True)
+    return {"deleted": job_id}
 
 
 # 前端构建产物存在时托管（放最后，避免吞掉 /api 路由）

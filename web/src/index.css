@@ -55,3 +55,6 @@ button:not(:disabled) { background: #3b64f4; border-color: #3b64f4; }
 .history th, .history td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #232837; }
 .history th { color: #9aa1af; font-weight: 500; }
 .history a { color: #6c8cff; text-decoration: none; }
+.del { background: none; border: 1px solid #5a3030; color: #e07b73;
+       border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: 13px; }
+.del:hover { background: #2a1b1b; }

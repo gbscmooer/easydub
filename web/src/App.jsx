@@ -84,6 +84,15 @@ export default function App() {
     }
   }, [file, lang, bgm, lipsync, poll]);
 
+  const delJob = useCallback(async (id) => {
+    try {
+      await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+    } catch {
+      /* 删除失败静默，列表会重新拉取 */
+    }
+    refreshHistory();
+  }, [refreshHistory]);
+
   const reset = () => {
     setFile(null);
     setJob(null);
@@ -207,6 +216,7 @@ export default function App() {
                 <th>目标语言</th>
                 <th>状态</th>
                 <th>成品</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -224,6 +234,13 @@ export default function App() {
                   <td>
                     {h.state === "done" && (
                       <a href={`/api/jobs/${h.id}/result`}>播放/下载</a>
+                    )}
+                  </td>
+                  <td>
+                    {(h.state === "done" || h.state === "error") && (
+                      <button className="del" onClick={() => delJob(h.id)}>
+                        删除
+                      </button>
                     )}
                   </td>
                 </tr>
