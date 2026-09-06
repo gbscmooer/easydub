@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     asr_provider: str = "local"
     # local provider 的模型规格: tiny/base/small，越大越准越慢
     asr_model_size: str = "base"
+    # 术语表："品牌名=译法;口号=译法"，翻译/重译提示词都会注入（D3）
+    glossary: str = ""
     # 中间产物目录（各阶段缓存落盘，重跑跳过已成功阶段）
     workdir: str = "artifacts"
 

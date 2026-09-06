@@ -5,7 +5,7 @@
 """
 import json
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import httpx
 
@@ -36,7 +36,8 @@ class EchoTranslator:
 
 class LLMTranslator:
     def __init__(self, api_key: str, base_url: str, model: str,
-                 target_lang: str = "en", limit: bool = True):
+                 target_lang: str = "en", limit: bool = True,
+                 glossary: Optional[Dict[str, str]] = None):
         if not api_key:
             raise ValueError("缺少 LLM_API_KEY")
         self.api_key = api_key
@@ -45,11 +46,13 @@ class LLMTranslator:
         self.target_lang = target_lang
         # limit=False 用于 E1 消融：提示词不带字符预算，纯自然翻译
         self.limit = limit
+        # 术语表（品牌名/slogan 跨段译法一致），注入两种提示词
+        self.glossary = glossary or {}
         # base_url 含 "anthropic" 即走 Anthropic 协议（如 MiMo 代理）
         self.protocol = "anthropic" if "anthropic" in base_url.lower() else "openai"
 
     # ---- HTTP ----
-    def _chat(self, user_prompt: str) -> str:
+    def _chat(self, user_prompt: str, system: str = SYSTEM_PROMPT) -> str:
         if self.protocol == "anthropic":
             def build():
                 return httpx.post(
@@ -61,7 +64,7 @@ class LLMTranslator:
                     },
                     json={
                         "model": self.model, "max_tokens": 4096,
-                        "system": SYSTEM_PROMPT,
+                        "system": system,
                         "messages": [{"role": "user", "content": user_prompt}],
                     },
                     timeout=120,
@@ -82,7 +85,7 @@ class LLMTranslator:
                     # 不带 max_tokens 时部分供应商按整个上下文预扣补全预算，直接 400
                     "max_tokens": 4096,
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "system", "content": system},
                         {"role": "user", "content": user_prompt},
                     ],
                 },
@@ -98,6 +101,9 @@ class LLMTranslator:
         cps = CPS_TABLE.get(self.target_lang, 14)
         lang = LANG_NAME.get(self.target_lang, self.target_lang)
         lines = [f"把以下字幕翻译成{lang}。"]
+        if self.glossary:
+            terms = "；".join(f"`{k}`必须译为`{v}`" for k, v in self.glossary.items())
+            lines.append(f"术语表（全部段落严格遵守）：{terms}。")
         for i, seg in enumerate(segments):
             if self.limit:
                 budget = max(8, int(seg.slot * cps))
@@ -139,20 +145,27 @@ class LLMTranslator:
             prompt += "\n（上一次输出不是合法的 JSON 数组或段数不符，请严格按要求重新输出）"
         raise RuntimeError("翻译输出两次解析失败，请检查模型是否遵循 JSON 格式")
 
-    def retranslate(self, src_text: str, old_text: str, budget: int) -> str:
+    def retranslate(self, src_text: str, old_text: str, budget: int,
+                    hint: str = "") -> str:
         """超时段重译：给定更紧的字符预算，要求更短的译文。
 
         这是"双向夹逼"生成端的后手——首轮译文实测超时后，
         把实测结果（预算砍半级别的要求）反馈给模型重新生成。
         """
         lang = LANG_NAME.get(self.target_lang, self.target_lang)
+        glossary_note = ""
+        if self.glossary:
+            terms = "；".join(f"`{k}`必须译为`{v}`" for k, v in self.glossary.items())
+            glossary_note = f"术语表约束：{terms}。\n"
         prompt = (
             f"这句广告词的{lang}译文太长，配音超出了原视频这句话的时间。\n"
             f"中文原文：{src_text}\n"
             f"超长译文（{len(old_text)}字符）：{old_text}\n"
+            f"{glossary_note}"
             f"硬性要求：重新翻译成{lang}，译文不超过 {budget} 个字符，"
             f"保留核心卖点，口语化。\n"
-            '只输出 JSON 数组：[{"text": "新译文"}]'
+            + (f"补充指导：{hint}\n" if hint else "")
+            + '只输出 JSON 数组：[{"text": "新译文"}]'
         )
         for _ in range(2):
             raw = self._chat(prompt)

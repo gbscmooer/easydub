@@ -176,7 +176,7 @@ def _has_subtitles_filter() -> bool:
 _LANG_CODE = {"en": "eng", "ja": "jpn", "ko": "kor", "es": "spa", "zh": "zho"}
 
 
-def _subtitles_arg(srt) -> str:
+def _subtitles_arg(srt, style: str = "") -> str:
     """构造 subtitles= 滤镜参数。
 
     filtergraph 解析（第一级）按 , ; [ ] 切分、单引号包裹的内容原样保留；
@@ -191,11 +191,17 @@ def _subtitles_arg(srt) -> str:
         shutil.copy(p, tmp)
         p = tmp
     inner = str(p).replace("\\", "/").replace(":", r"\:")
-    return f"subtitles='{inner}'"
+    arg = f"subtitles='{inner}'"
+    if style:  # 样式串里的逗号在单引号内，不会被 filtergraph 切分
+        arg += f":force_style='{style}'"
+    return arg
+
+
+SUBTITLE_STYLE = "FontSize=18,Outline=1.2,Shadow=0,MarginV=36"
 
 
 def mux(video, audio, dst, srt: Optional[Path] = None,
-        lang: str = "en") -> Path:
+        lang: str = "en", subtitle_style: Optional[str] = SUBTITLE_STYLE) -> Path:
     """替换音轨输出成品。
 
     字幕双层：烧录（需 libass，重编码视频）保证任何播放器可见，
@@ -205,7 +211,7 @@ def mux(video, audio, dst, srt: Optional[Path] = None,
     cmd = ["ffmpeg", "-y", "-i", str(video), "-i", str(audio)]
     if srt is not None and _has_subtitles_filter():
         cmd += ["-i", str(srt)]
-        cmd += ["-vf", _subtitles_arg(srt),
+        cmd += ["-vf", _subtitles_arg(srt, subtitle_style or ""),
                 "-map", "0:v:0", "-map", "1:a:0", "-map", "2:s:0",
                 "-c:v", "libx264", "-crf", "18", "-preset", "fast",
                 "-c:s", "mov_text",
